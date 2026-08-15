@@ -173,8 +173,12 @@ def require_user(authorization: Optional[str] = Header(None)) -> sqlite3.Row:
 # App + middleware
 # --------------------------------------------------------------------------
 
-app = FastAPI(title="Meet App")
-
+app = FastAPI(
+    title="Meet App",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
