@@ -242,6 +242,13 @@
   }
   #gate-overlay.hidden{ display:none; }
 
+  /* ---------- RELOAD / REJOIN GATE ---------- */
+  #rejoin-overlay{
+    position:fixed; inset:0; background:rgba(6,10,20,0.92); backdrop-filter:blur(6px); z-index:300;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  #rejoin-overlay.hidden{ display:none; }
+
   .footer-note{ color:var(--text-dimmer); font-size:12px; margin-top:18px; text-align:center; }
 </style>
 </head>
@@ -382,6 +389,22 @@
   </div>
 </div>
 
+<!-- ============ RELOAD / REJOIN GATE ============ -->
+<div id="rejoin-overlay" class="hidden">
+  <div class="card login-card" style="max-width:380px; width:100%; text-align:center;">
+    <div class="brand" style="justify-content:center; margin-bottom:6px;"><span class="pulse-dot"></span> Signal</div>
+    <h3 style="font-family:var(--font-display); font-size:18px; margin:14px 0 6px;">Rejoin the meeting?</h3>
+    <p style="color:var(--text-dim); font-size:13px; margin-bottom:18px;">
+      It looks like this page just reloaded. Rejoin now, or this session ends in
+      <span id="rejoin-countdown" style="color:var(--live); font-weight:700;">30</span>s.
+    </p>
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-ghost" id="rejoin-cancel-btn" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary" id="rejoin-confirm-btn" style="flex:1;">Joined</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ CHATBOT ============ -->
 <button id="bot-fab" title="Ask the meeting assistant">✨</button>
 <div id="bot-panel">
@@ -451,10 +474,31 @@
   // ---------------------------------------------------------------
   // API helpers
   // ---------------------------------------------------------------
+  // ---------------------------------------------------------------
+  // Session expiry — same pattern as Meet/Discord: any 401 anywhere
+  // (an API call, the websocket) means the session is no longer good,
+  // so we clear local state and land back on the first/login screen.
+  // ---------------------------------------------------------------
+  let sessionExpiredHandled = false;
+  function handleSessionExpired(message){
+    if (sessionExpiredHandled) return; // avoid piling up redirects/toasts
+    sessionExpiredHandled = true;
+    localStorage.removeItem("meet_token");
+    localStorage.removeItem("meet_user");
+    sessionStorage.removeItem("active_room");
+    toast(message || "Your session has expired. Please sign in again.");
+    setTimeout(() => { window.location.href = "/"; }, 1200);
+  }
+
   async function apiFetch(path, opts = {}){
     opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
     if (state.token) opts.headers["Authorization"] = "Bearer " + state.token;
     const res = await fetch(API + path, opts);
+    if (res.status === 401){
+      const body = await res.json().catch(() => ({}));
+      handleSessionExpired(body.detail);
+      throw new Error(body.detail || "Session expired");
+    }
     if (!res.ok){
       const body = await res.json().catch(() => ({}));
       throw new Error(body.detail || ("Request failed: " + res.status));
@@ -474,14 +518,32 @@
   // ---------------------------------------------------------------
   // Routing: "/" -> dashboard (if logged in) or login. "/room/:id" -> room.
   // ---------------------------------------------------------------
-  function boot(){
+  async function boot(){
     const path = window.location.pathname;
     const roomMatch = path.match(/^\/room\/([a-zA-Z0-9]+)/);
+
+    if (state.token && state.user){
+      // Confirm the session is still good before showing anything that
+      // depends on it. A 401 here is handled globally by apiFetch, which
+      // clears storage and redirects to "/" - we just need to stop here.
+      try {
+        await apiFetch("/api/auth/me");
+      } catch (e) {
+        return;
+      }
+    }
 
     if (roomMatch){
       const meetingId = roomMatch[1];
       if (state.token && state.user){
-        enterRoomFlow(meetingId);
+        if (sessionStorage.getItem("active_room") === meetingId){
+          // We were already "in" this exact room this tab-session, so this
+          // is a reload (F5), not a fresh navigation - confirm before
+          // silently reconnecting.
+          showRejoinGate(meetingId);
+        } else {
+          enterRoomFlow(meetingId);
+        }
       } else {
         // Ask for email before joining (per spec: joining via link asks for email)
         $("#gate-overlay").classList.remove("hidden");
@@ -506,6 +568,50 @@
     } else {
       showScreen("#screen-login");
     }
+  }
+
+  // ---------------------------------------------------------------
+  // Reload / rejoin gate
+  // ---------------------------------------------------------------
+  let rejoinTimer = null;
+
+  function showRejoinGate(meetingId){
+    $("#rejoin-overlay").classList.remove("hidden");
+    let secondsLeft = 30;
+    $("#rejoin-countdown").textContent = secondsLeft;
+
+    const cleanup = () => {
+      if (rejoinTimer) clearInterval(rejoinTimer);
+      rejoinTimer = null;
+      $("#rejoin-overlay").classList.add("hidden");
+      $("#rejoin-cancel-btn").onclick = null;
+      $("#rejoin-confirm-btn").onclick = null;
+    };
+
+    rejoinTimer = setInterval(() => {
+      secondsLeft -= 1;
+      $("#rejoin-countdown").textContent = secondsLeft;
+      if (secondsLeft <= 0){
+        cleanup();
+        leaveToDashboard();
+      }
+    }, 1000);
+
+    $("#rejoin-cancel-btn").onclick = () => {
+      cleanup();
+      leaveToDashboard();
+    };
+
+    $("#rejoin-confirm-btn").onclick = () => {
+      cleanup();
+      // Rejoin right here, in the same window/tab - never a new one.
+      enterRoomFlow(meetingId);
+    };
+  }
+
+  function leaveToDashboard(){
+    sessionStorage.removeItem("active_room");
+    window.location.href = "/";
   }
 
   // ---------------------------------------------------------------
@@ -568,6 +674,7 @@
   // ---------------------------------------------------------------
   async function enterRoomFlow(meetingId){
     state.meetingId = meetingId;
+    sessionStorage.setItem("active_room", meetingId);
     showScreen("#screen-room");
     history.replaceState({}, "", "/room/" + meetingId);
     $("#room-code-label").textContent = meetingId;
@@ -587,6 +694,14 @@
     } catch (e) { toast(e.message); }
 
     // camera/mic permission
+    if (window.location.hostname !== "localhost" && window.location.protocol === "http:"){
+      // Chrome only persists camera/mic grants ("Allow on every visit") for
+      // https:// origins or the literal hostname "localhost" - an IP like
+      // 127.0.0.1 over plain http only ever gets a session-scoped grant, so
+      // it re-prompts on every reload. Nothing in this app can change that;
+      // pointing it out beats a silent repeated prompt.
+      toast("Tip: open this via http://localhost:" + (window.location.port || "80") + " instead of the IP — Chrome will then remember your camera/mic choice.");
+    }
     try {
       state.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     } catch (e) {
@@ -709,11 +824,15 @@
     form.append("meeting_id", state.meetingId);
     form.append("file", blob, "recording.webm");
     try {
-      await fetch("/api/recordings/upload", {
+      const res = await fetch("/api/recordings/upload", {
         method: "POST",
         headers: { "Authorization": "Bearer " + state.token },
         body: form,
       });
+      // Leaving already sends us to "/" right after this call, so on a 401
+      // (expired session) we just skip the upload quietly instead of also
+      // firing the session-expired redirect mid-leave.
+      if (!res.ok) console.warn("Recording upload failed:", res.status);
     } catch (e) {
       console.warn("Recording upload failed:", e);
     }
@@ -774,18 +893,29 @@
           removeRemoteTile(data.peer_id);
           break;
         case "chat-message":
-          renderChatMessage({ sender_name: data.name, text: data.text, created_at: data.created_at, self: data.from === state.peerId });
-          if ($("#chat-panel").classList.contains("hidden") && data.from !== state.peerId){
-            toast(data.name + ": " + data.text.slice(0, 60));
+          if (data.from !== state.peerId){
+            renderChatMessage({ sender_name: data.name, text: data.text, created_at: data.created_at, self: false });
+            if ($("#chat-panel").classList.contains("hidden")){
+              toast(data.name + ": " + data.text.slice(0, 60));
+            }
           }
           break;
         case "media-state":
           updateRemoteMediaBadge(data.from, data.state);
           break;
+        case "kicked":
+          toast("You joined this meeting from another window — this tab has been disconnected.");
+          sessionStorage.removeItem("active_room");
+          setTimeout(() => { window.location.href = "/"; }, 1500);
+          break;
       }
     };
 
-    ws.onclose = () => { /* signaling closed */ };
+    ws.onclose = (evt) => {
+      if (evt.code === 4401){
+        handleSessionExpired("Your session has expired. Please sign in again.");
+      }
+    };
     ws.onerror = () => toast("Connection issue — signaling channel dropped.");
   }
 
@@ -794,6 +924,11 @@
 
     const pc = new RTCPeerConnection({ iceServers: state.iceServers });
     state.peers[peerId] = { pc, name: name || "Guest" };
+
+    // Show a placeholder tile the instant we know about this peer — on both
+    // the offering side and the answering side — so nobody stares at an
+    // empty grid while ICE/SDP negotiation finishes in the background.
+    addRemoteTile(peerId, name || "Connecting…");
 
     state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
 
@@ -834,7 +969,6 @@
     };
 
     if (isInitiator){
-      addRemoteTile(peerId, "Connecting…");
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       state.ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
@@ -924,6 +1058,7 @@
   $("#leave-btn").addEventListener("click", async () => {
     $("#leave-btn").disabled = true;
     $("#leave-btn").textContent = "Leaving…";
+    sessionStorage.removeItem("active_room");
     await stopAndUploadRecording();
     Object.values(state.peers).forEach(({ pc }) => pc.close());
     state.peers = {};
@@ -956,6 +1091,17 @@
     const input = $("#chat-input");
     const text = input.value.trim();
     if (!text || !state.ws) return;
+    // Render immediately for the sender (optimistic) instead of waiting for
+    // the server's broadcast round-trip, so your own messages never feel
+    // slower than the other side's. The server still broadcasts to everyone
+    // (including us), but the "kicked"-style from === peerId check in
+    // ws.onmessage skips re-rendering our own echoed copy.
+    renderChatMessage({
+      sender_name: state.user.first_name || state.user.name,
+      text,
+      created_at: new Date().toISOString(),
+      self: true,
+    });
     state.ws.send(JSON.stringify({ type: "chat-message", text }));
     input.value = "";
   }
