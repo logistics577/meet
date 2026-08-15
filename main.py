@@ -1,649 +1,1158 @@
-"""
-Meet App - Production-style single-file FastAPI backend.
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Signal — Meet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B1220;
+    --panel:#111A2D;
+    --panel-2:#182446;
+    --panel-3:#1F2C52;
+    --border:rgba(255,255,255,0.08);
+    --border-strong:rgba(255,255,255,0.16);
+    --text:#E8ECF3;
+    --text-dim:#8B93A8;
+    --text-dimmer:#5C6478;
+    --accent:#6C5CE7;
+    --accent-2:#8B7CF6;
+    --accent-soft:rgba(108,92,231,0.15);
+    --live:#FF6B4A;
+    --success:#33D69F;
+    --danger:#FF5470;
+    --radius:14px;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-body:'Inter',sans-serif;
+    --font-mono:'JetBrains Mono',monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:
+      radial-gradient(circle at 15% 0%, rgba(108,92,231,0.12), transparent 45%),
+      radial-gradient(circle at 85% 100%, rgba(255,107,74,0.08), transparent 40%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    min-height:100%;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;}
+  button{font-family:inherit;}
+  ::selection{background:var(--accent); color:#fff;}
+  :focus-visible{outline:2px solid var(--accent-2); outline-offset:2px;}
 
-Features:
-- SQLite persistence (users, meetings, messages)
-- Email-based login (no password) -> bearer token
-- Create / join meeting links
-- WebSocket signaling for WebRTC (offer/answer/ICE) + live chat + join notifications
-- STUN/TURN config endpoint
-- Screen-share is handled client side (renegotiation over the same signaling channel)
-- Chatbot popup (Groq llama-3.3-70b-versatile) - only unlocked for a specific email
-- Custom logging middleware + CORS middleware
-- Serves the frontend (index.html) at "/"
+  .screen{display:none; min-height:100vh;}
+  .screen.active{display:flex;}
 
-Run:
-    pip install fastapi "uvicorn[standard]" websockets httpx --break-system-packages
-    export GROQ_API_KEY=xxxx           # required for chatbot
-    export TURN_URL=turn:your.turn.server:3478   # optional
-    export TURN_USERNAME=xxxx                    # optional
-    export TURN_CREDENTIAL=xxxx                  # optional
-    python3 main.py
-"""
+  /* ---------- shared bits ---------- */
+  .brand{
+    display:flex; align-items:center; gap:10px;
+    font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:-0.02em;
+  }
+  .brand .pulse-dot{
+    width:9px; height:9px; border-radius:50%; background:var(--live);
+    box-shadow:0 0 0 0 rgba(255,107,74,0.6);
+    animation:pulse 2s infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 rgba(255,107,74,0.55); }
+    70%{ box-shadow:0 0 0 8px rgba(255,107,74,0); }
+    100%{ box-shadow:0 0 0 0 rgba(255,107,74,0); }
+  }
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border-radius:10px; border:1px solid var(--border-strong);
+    background:var(--panel-2); color:var(--text);
+    font-weight:600; font-size:14px; padding:11px 18px; cursor:pointer;
+    transition:transform .12s ease, background .15s ease, border-color .15s ease;
+  }
+  .btn:hover{ background:var(--panel-3); border-color:var(--accent-2); }
+  .btn:active{ transform:scale(0.97); }
+  .btn-primary{ background:linear-gradient(135deg, var(--accent), var(--accent-2)); border:none; }
+  .btn-primary:hover{ filter:brightness(1.08); background:linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .btn-ghost{ background:transparent; border-color:var(--border); }
+  .btn-danger{ background:var(--danger); border:none; color:#fff; }
+  .btn-danger:hover{ background:#ff2f57; }
+  .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+  input[type=text], input[type=email]{
+    width:100%; background:var(--panel); border:1px solid var(--border-strong);
+    color:var(--text); border-radius:10px; padding:13px 14px; font-size:15px;
+    font-family:inherit;
+  }
+  input::placeholder{ color:var(--text-dimmer); }
+  .field-label{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-dim); font-weight:600; margin-bottom:8px; display:block; }
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  }
+  .toast-stack{ position:fixed; top:20px; right:20px; z-index:999; display:flex; flex-direction:column; gap:10px; }
+  .toast{
+    background:var(--panel-2); border:1px solid var(--border-strong); border-left:3px solid var(--accent-2);
+    border-radius:10px; padding:12px 16px; font-size:13px; min-width:220px;
+    animation:slideIn .25s ease;
+    box-shadow:0 10px 30px rgba(0,0,0,0.35);
+  }
+  @keyframes slideIn{ from{ transform:translateX(30px); opacity:0;} to{ transform:translateX(0); opacity:1;} }
 
-import os
-import time
-import uuid
-import asyncio
-import sqlite3
-import secrets
-import logging
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Optional
-from dotenv import load_dotenv
-import httpx
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Request, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel
+  /* ---------- LOGIN ---------- */
+  #screen-login{ align-items:center; justify-content:center; padding:24px; }
+  .login-box{ width:100%; max-width:380px; text-align:center; }
+  .login-box .brand{ justify-content:center; margin-bottom:8px; }
+  .login-box p.sub{ color:var(--text-dim); font-size:14px; margin-bottom:32px; }
+  .login-card{ padding:28px; text-align:left; }
+  .login-card .btn-primary{ width:100%; margin-top:16px; padding:13px; }
+  #login-error{ color:var(--danger); font-size:13px; margin-top:10px; display:none; }
 
-load_dotenv()
-# --------------------------------------------------------------------------
-# Config
-# --------------------------------------------------------------------------
+  /* ---------- DASHBOARD ---------- */
+  #screen-dashboard{ flex-direction:column; width:100%; }
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 32px; border-bottom:1px solid var(--border);
+  }
+  .who{ display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text-dim); }
+  .who .avatar{
+    width:32px; height:32px; border-radius:50%; background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff;
+    font-family:var(--font-display);
+  }
+  .dash-main{ flex:1; display:flex; align-items:flex-start; justify-content:center; padding:64px 24px; }
+  .dash-grid{ width:100%; max-width:920px; display:grid; grid-template-columns:1.1fr 0.9fr; gap:24px; }
+  @media (max-width:760px){ .dash-grid{ grid-template-columns:1fr; } }
+  .dash-hero{ padding:40px; display:flex; flex-direction:column; justify-content:center; }
+  .dash-hero h1{ font-family:var(--font-display); font-size:32px; font-weight:700; letter-spacing:-0.02em; line-height:1.15; margin-bottom:10px; }
+  .dash-hero p{ color:var(--text-dim); font-size:14px; margin-bottom:26px; line-height:1.6; }
+  .dash-side{ padding:28px; display:flex; flex-direction:column; gap:14px; }
+  .dash-side h3{ font-family:var(--font-display); font-size:15px; margin-bottom:4px; }
+  .link-result{ margin-top:18px; display:none; }
+  .link-row{
+    display:flex; align-items:center; gap:8px; background:var(--panel-2); border:1px solid var(--border-strong);
+    border-radius:10px; padding:10px 12px; font-family:var(--font-mono); font-size:13px; overflow:hidden;
+  }
+  .link-row span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; color:var(--accent-2); }
+  .divider-or{ display:flex; align-items:center; gap:10px; color:var(--text-dimmer); font-size:12px; margin:6px 0; }
+  .divider-or::before, .divider-or::after{ content:""; flex:1; height:1px; background:var(--border); }
+  .dash-main{ flex-direction:column; align-items:center; }
+  .about-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:18px; }
+  .about-item-title{ font-weight:600; font-size:13px; margin-bottom:6px; }
+  .about-item p{ color:var(--text-dimmer); font-size:12px; line-height:1.6; }
 
-DB_PATH = os.environ.get("MEET_DB_PATH", os.path.join(os.path.dirname(__file__), "meet.db"))
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+  /* ---------- ROOM ---------- */
+  #screen-room{ flex-direction:column; width:100%; height:100vh; overflow:hidden; }
+  .room-topbar{
+    display:flex; align-items:center; justify-content:space-between; padding:14px 22px;
+    border-bottom:1px solid var(--border); flex-shrink:0;
+  }
+  .room-topbar .meta{ display:flex; align-items:center; gap:14px; }
+  .room-topbar .meta .code{ font-family:var(--font-mono); font-size:12px; color:var(--text-dim); background:var(--panel-2); padding:5px 10px; border-radius:8px; }
+  .room-body{ flex:1; display:flex; min-height:0; }
+  .video-area{ flex:1; padding:18px; overflow-y:auto; }
+  .video-grid{
+    display:grid; gap:14px; height:100%;
+    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    grid-auto-rows:minmax(180px, 1fr);
+  }
+  .tile{
+    position:relative; background:#060A14; border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .tile video{ width:100%; height:100%; object-fit:cover; }
+  .tile.mirrored video{ transform:scaleX(-1); }
+  .tile .name-tag{
+    position:absolute; bottom:10px; left:10px; background:rgba(6,10,20,0.65); backdrop-filter:blur(6px);
+    padding:5px 10px; border-radius:8px; font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px;
+  }
+  .tile .avatar-fallback{
+    width:64px; height:64px; border-radius:50%; background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-size:24px; font-weight:700; color:#fff;
+  }
+  .tile .mic-off-badge{
+    position:absolute; top:10px; right:10px; width:26px; height:26px; border-radius:50%; background:var(--danger);
+    display:none; align-items:center; justify-content:center; font-size:12px;
+  }
 
-# Only this email gets the AI chatbot popup unlocked (per spec).
-CHATBOT_ALLOWED_EMAIL = os.environ.get("CHATBOT_ALLOWED_EMAIL", "abc@gmail.com").lower()
+  .chat-panel{
+    width:320px; flex-shrink:0; border-left:1px solid var(--border); display:flex; flex-direction:column;
+  }
+  .chat-panel.hidden{ display:none; }
+  .chat-header{ padding:16px 18px; border-bottom:1px solid var(--border); font-family:var(--font-display); font-weight:600; font-size:14px; }
+  .chat-messages{ flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
+  .msg{ font-size:13px; line-height:1.45; }
+  .msg .msg-name{ font-weight:700; font-size:12px; color:var(--accent-2); margin-bottom:2px; }
+  .msg.self .msg-name{ color:var(--success); }
+  .msg .msg-time{ color:var(--text-dimmer); font-size:10px; margin-left:6px; font-weight:400; }
+  .chat-input-row{ padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; }
+  .chat-input-row input{ flex:1; padding:10px 12px; font-size:13px; }
+  .chat-input-row button{ padding:10px 14px; }
 
-TURN_URL = os.environ.get("TURN_URL", "")
-TURN_USERNAME = os.environ.get("TURN_USERNAME", "")
-TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL", "")
+  .controls-bar{
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    padding:16px; border-top:1px solid var(--border); flex-shrink:0; background:var(--panel);
+  }
+  .ctrl-btn{
+    width:48px; height:48px; border-radius:50%; border:1px solid var(--border-strong); background:var(--panel-2);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px; color:var(--text);
+    transition:all .15s ease; position:relative;
+  }
+  .ctrl-btn:hover{ background:var(--panel-3); }
+  .ctrl-btn.off{ background:var(--danger); border-color:var(--danger); }
+  .ctrl-btn.active{ background:var(--accent); border-color:var(--accent); }
+  .ctrl-btn.leave{ background:var(--danger); border-color:var(--danger); width:auto; padding:0 22px; border-radius:24px; font-size:14px; font-weight:600; gap:8px; }
+  .ctrl-btn.leave:hover{ background:#ff2f57; }
+  .ctrl-sep{ width:1px; height:28px; background:var(--border); margin:0 4px; }
 
-# Max recording upload size (bytes) - keep SQLite BLOBs sane. Default 25MB.
-MAX_RECORDING_BYTES = int(os.environ.get("MAX_RECORDING_BYTES", 25 * 1024 * 1024))
+  /* ---------- CHATBOT POPUP ---------- */
+  #bot-fab{
+    position:fixed; bottom:24px; right:24px; width:56px; height:56px; border-radius:50%;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2)); border:none; cursor:pointer;
+    display:none; align-items:center; justify-content:center; font-size:24px; color:#fff;
+    box-shadow:0 10px 30px rgba(108,92,231,0.5); z-index:200;
+    animation:botIntro .4s ease;
+  }
+  @keyframes botIntro{ from{ transform:scale(0); } to{ transform:scale(1); } }
+  #bot-fab:hover{ filter:brightness(1.1); }
+  #bot-panel{
+    position:fixed; top:0; right:0; height:100%; width:340px; max-width:92vw;
+    background:var(--panel); border-left:1px solid var(--border-strong); z-index:201;
+    display:flex; flex-direction:column; transform:translateX(100%); transition:transform .25s ease;
+    box-shadow:-10px 0 40px rgba(0,0,0,0.4);
+  }
+  #bot-panel.open{ transform:translateX(0); }
+  .bot-header{
+    padding:16px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;
+  }
+  .bot-header .bot-title{ display:flex; align-items:center; gap:10px; font-family:var(--font-display); font-weight:600; }
+  .bot-header .bot-title .dot{ width:8px; height:8px; border-radius:50%; background:var(--success); }
+  .bot-close{ background:none; border:none; color:var(--text-dim); font-size:20px; cursor:pointer; }
+  .bot-messages{ flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+  .bot-msg{ font-size:13px; line-height:1.5; max-width:88%; padding:10px 13px; border-radius:12px; }
+  .bot-msg.user{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bot-msg.bot{ align-self:flex-start; background:var(--panel-2); border-bottom-left-radius:4px; }
+  .bot-msg.typing{ color:var(--text-dim); font-style:italic; }
+  .bot-input-row{ padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; }
+  .bot-input-row input{ flex:1; padding:10px 12px; font-size:13px; }
 
-# Keep-alive: on platforms like Render's free tier, the service spins down after
-# ~15 min with no inbound HTTP traffic. If SELF_PING_URL (or RENDER_EXTERNAL_URL,
-# which Render sets automatically) is present, a background task pings /health
-# on an interval so an *already-running* instance never goes idle-cold.
-# IMPORTANT: this cannot wake an instance that has already spun down - only an
-# external monitor (UptimeRobot, cron-job.org, etc.) hitting a public URL can do
-# that. Use both for a live interview: this task keeps it warm, an external
-# monitor guarantees the first request always lands on a warm instance.
-SELF_PING_URL = os.environ.get("SELF_PING_URL") or os.environ.get("RENDER_EXTERNAL_URL", "")
-KEEP_ALIVE_INTERVAL_SECONDS = int(os.environ.get("KEEP_ALIVE_INTERVAL_SECONDS", 600))
+  /* ---------- EMAIL GATE (join via link) ---------- */
+  #gate-overlay{
+    position:fixed; inset:0; background:rgba(6,10,20,0.9); backdrop-filter:blur(6px); z-index:300;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  #gate-overlay.hidden{ display:none; }
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-logger = logging.getLogger("meetapp")
+  /* ---------- RELOAD / REJOIN GATE ---------- */
+  #rejoin-overlay{
+    position:fixed; inset:0; background:rgba(6,10,20,0.92); backdrop-filter:blur(6px); z-index:300;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  #rejoin-overlay.hidden{ display:none; }
 
-# --------------------------------------------------------------------------
-# DB layer
-# --------------------------------------------------------------------------
+  .footer-note{ color:var(--text-dimmer); font-size:12px; margin-top:18px; text-align:center; }
+</style>
+</head>
+<body>
 
-@contextmanager
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+<div class="toast-stack" id="toast-stack"></div>
 
+<!-- ============ LOGIN ============ -->
+<div class="screen active" id="screen-login">
+  <div class="login-box">
+    <div class="brand"><span class="pulse-dot"></span> Signal</div>
+    <p class="sub">Video meetings with a built-in AI co-pilot.</p>
+    <div class="card login-card">
+      <label class="field-label" for="login-email">Your email</label>
+      <input type="email" id="login-email" placeholder="you@company.com" autocomplete="email" />
+      <button class="btn btn-primary" id="login-btn">Continue</button>
+      <div id="login-error"></div>
+    </div>
+    <p class="footer-note">No password needed — just an email to identify you on calls.</p>
+  </div>
+</div>
 
-def init_db():
-    with get_db() as db:
-        db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                token TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
+<!-- ============ DASHBOARD ============ -->
+<div class="screen" id="screen-dashboard">
+  <div style="display:flex; flex-direction:column; width:100%;">
+    <div class="topbar">
+      <div class="brand"><span class="pulse-dot"></span> Signal</div>
+      <div class="who">
+        <span id="dash-greeting">Hi, there</span>
+        <div class="avatar" id="dash-avatar">?</div>
+      </div>
+    </div>
+    <div class="dash-main">
+      <div class="dash-grid">
+        <div class="card dash-hero">
+          <h1>Start a meeting in one click.</h1>
+          <p>Create a private room, share the link, and jump on camera — with screen share and live chat built in.</p>
+          <div>
+            <button class="btn btn-primary" id="create-meeting-btn" style="padding:14px 22px; font-size:15px;">＋ New meeting</button>
+          </div>
+          <div class="link-result card" id="link-result" style="padding:16px; background:var(--panel-2);">
+            <label class="field-label">Share this link</label>
+            <div class="link-row">
+              <span id="link-text"></span>
+              <button class="btn btn-ghost" id="copy-link-btn" style="padding:8px 12px;">Copy</button>
+            </div>
+            <button class="btn btn-primary" id="enter-meeting-btn" style="width:100%; margin-top:12px;">Enter room →</button>
+          </div>
+        </div>
+        <div class="card dash-side">
+          <h3>Join a meeting</h3>
+          <p style="color:var(--text-dim); font-size:13px;">Have a code or link? Paste it below.</p>
+          <input type="text" id="join-code-input" placeholder="Meeting code, e.g. cdf102d6" />
+          <button class="btn" id="join-code-btn">Join meeting</button>
+          <div class="divider-or">tip</div>
+          <p style="color:var(--text-dimmer); font-size:12px; line-height:1.6;">
+            Anyone with your meeting link can join directly — they'll just need to enter their email first.
+          </p>
+        </div>
+      </div>
 
-            CREATE TABLE IF NOT EXISTS meetings (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                host_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (host_id) REFERENCES users(id)
-            );
+      <div class="card about-card" style="max-width:920px; width:100%; margin-top:24px; padding:32px;">
+        <h3 style="font-family:var(--font-display); font-size:18px; margin-bottom:14px;">About Signal</h3>
+        <p style="color:var(--text-dim); font-size:13px; line-height:1.7; margin-bottom:20px;">
+          Signal is a lightweight video meeting tool built for quick, no-friction calls — no downloads,
+          no accounts to manage, just an email and a link. Every room runs on peer-to-peer WebRTC for low
+          latency, keeps a running chat log alongside the call, and can hand you an AI assistant mid-meeting
+          when you need a fast answer without breaking your flow.
+        </p>
+        <div class="about-grid">
+          <div class="about-item">
+            <div class="about-item-title">🎥 HD video &amp; screen share</div>
+            <p>Camera, mic, and screen sharing with one click — switch between them without dropping the call.</p>
+          </div>
+          <div class="about-item">
+            <div class="about-item-title">💬 Live in-call chat</div>
+            <p>A running message thread alongside the video, saved so you can revisit what was shared.</p>
+          </div>
+          <div class="about-item">
+            <div class="about-item-title">✨ Built-in AI assistant</div>
+            <p>A chat-based assistant available right inside the call for quick lookups and summaries.</p>
+          </div>
+          <div class="about-item">
+            <div class="about-item-title">🔒 Private by default</div>
+            <p>Rooms are only reachable by direct link — nothing is listed or searchable.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                meeting_id TEXT NOT NULL,
-                sender_name TEXT NOT NULL,
-                sender_email TEXT,
-                text TEXT NOT NULL,
-                is_bot INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (meeting_id) REFERENCES meetings(id)
-            );
+<!-- ============ ROOM ============ -->
+<div class="screen" id="screen-room">
+  <div class="room-topbar">
+    <div class="meta">
+      <div class="brand" style="font-size:16px;"><span class="pulse-dot"></span> Signal</div>
+      <span class="code" id="room-code-label">—</span>
+      <span class="code" id="rec-indicator" style="display:none; color:var(--live); border:1px solid var(--live);">● REC</span>
+    </div>
+    <div class="meta">
+      <button class="btn btn-ghost" id="room-copy-btn" style="padding:8px 14px; font-size:13px;">Copy invite link</button>
+    </div>
+  </div>
+  <div class="room-body">
+    <div class="video-area">
+      <div class="video-grid" id="video-grid"></div>
+    </div>
+    <div class="chat-panel hidden" id="chat-panel">
+      <div class="chat-header">In-call messages</div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Message everyone…" />
+        <button class="btn btn-primary" id="chat-send-btn">Send</button>
+      </div>
+    </div>
+  </div>
+  <div class="controls-bar">
+    <button class="ctrl-btn active" id="toggle-mic-btn" title="Mute / unmute">🎤</button>
+    <button class="ctrl-btn active" id="toggle-cam-btn" title="Camera on / off">📷</button>
+    <button class="ctrl-btn" id="toggle-screen-btn" title="Share screen">🖥️</button>
+    <div class="ctrl-sep"></div>
+    <button class="ctrl-btn" id="toggle-chat-btn" title="Chat">💬</button>
+    <div class="ctrl-sep"></div>
+    <button class="ctrl-btn leave" id="leave-btn">Leave</button>
+  </div>
+</div>
 
-            CREATE TABLE IF NOT EXISTS participants (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                meeting_id TEXT NOT NULL,
-                user_id TEXT,
-                name TEXT NOT NULL,
-                email TEXT,
-                joined_at TEXT NOT NULL
-            );
+<!-- ============ EMAIL GATE for joining via shared link ============ -->
+<div id="gate-overlay" class="hidden">
+  <div class="card login-card" style="max-width:380px; width:100%;">
+    <div class="brand" style="margin-bottom:6px;"><span class="pulse-dot"></span> Signal</div>
+    <p style="color:var(--text-dim); font-size:13px; margin-bottom:20px;">Enter your email to join this meeting.</p>
+    <label class="field-label" for="gate-email">Email</label>
+    <input type="email" id="gate-email" placeholder="you@company.com" autocomplete="email" />
+    <button class="btn btn-primary" id="gate-join-btn" style="width:100%; margin-top:16px; padding:13px;">Join meeting</button>
+    <div id="gate-error" style="color:var(--danger); font-size:13px; margin-top:10px; display:none;"></div>
+  </div>
+</div>
 
-            CREATE TABLE IF NOT EXISTS recordings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                meeting_id TEXT NOT NULL,
-                user_id TEXT,
-                recorder_name TEXT,
-                mime_type TEXT NOT NULL,
-                audio_blob BLOB NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (meeting_id) REFERENCES meetings(id)
-            );
-            """
-        )
-    logger.info("SQLite ready at %s", DB_PATH)
+<!-- ============ RELOAD / REJOIN GATE ============ -->
+<div id="rejoin-overlay" class="hidden">
+  <div class="card login-card" style="max-width:380px; width:100%; text-align:center;">
+    <div class="brand" style="justify-content:center; margin-bottom:6px;"><span class="pulse-dot"></span> Signal</div>
+    <h3 style="font-family:var(--font-display); font-size:18px; margin:14px 0 6px;">Rejoin the meeting?</h3>
+    <p style="color:var(--text-dim); font-size:13px; margin-bottom:18px;">
+      It looks like this page just reloaded. Rejoin now, or this session ends in
+      <span id="rejoin-countdown" style="color:var(--live); font-weight:700;">30</span>s.
+    </p>
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-ghost" id="rejoin-cancel-btn" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary" id="rejoin-confirm-btn" style="flex:1;">Joined</button>
+    </div>
+  </div>
+</div>
 
+<!-- ============ CHATBOT ============ -->
+<button id="bot-fab" title="Ask the meeting assistant">✨</button>
+<div id="bot-panel">
+  <div class="bot-header">
+    <div class="bot-title"><span class="dot"></span> Meet Assistant</div>
+    <button class="bot-close" id="bot-close-btn">✕</button>
+  </div>
+  <div class="bot-messages" id="bot-messages">
+    <div class="bot-msg bot">Hi! I'm your meeting assistant. Ask me anything.</div>
+  </div>
+  <div class="bot-input-row">
+    <input type="text" id="bot-input" placeholder="Ask the assistant…" />
+    <button class="btn btn-primary" id="bot-send-btn">Send</button>
+  </div>
+</div>
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+<script>
+(function(){
+  "use strict";
 
+  // ---------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------
+  const API = ""; // same origin
+  const state = {
+    token: localStorage.getItem("meet_token") || null,
+    user: JSON.parse(localStorage.getItem("meet_user") || "null"),
+    meetingId: null,
+    peerId: null,
+    ws: null,
+    localStream: null,
+    screenStream: null,
+    cameraTrack: null,
+    peers: {},          // peer_id -> { pc, name }
+    micOn: true,
+    camOn: true,
+    screenOn: false,
+    iceServers: [{urls:["stun:stun.l.google.com:19302"]}],
+    // audio recording (mixed local + remote), uploaded to the backend on leave
+    audioCtx: null,
+    recordDest: null,
+    recorder: null,
+    recordedChunks: [],
+    connectedAudioSources: new Set(),
+  };
 
-# --------------------------------------------------------------------------
-# Auth helpers
-# --------------------------------------------------------------------------
+  const $ = (sel) => document.querySelector(sel);
+  const el = (tag, cls) => { const e = document.createElement(tag); if(cls) e.className = cls; return e; };
 
-def get_user_by_token(token: str) -> Optional[sqlite3.Row]:
-    with get_db() as db:
-        row = db.execute("SELECT * FROM users WHERE token = ?", (token,)).fetchone()
-        return row
+  function showScreen(id){
+    document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+    $(id).classList.add("active");
+  }
 
+  function toast(msg){
+    const stack = $("#toast-stack");
+    const t = el("div", "toast");
+    t.textContent = msg;
+    stack.appendChild(t);
+    setTimeout(() => t.remove(), 4200);
+  }
 
-def require_user(authorization: Optional[str] = Header(None)) -> sqlite3.Row:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    token = authorization.removeprefix("Bearer ").strip()
-    user = get_user_by_token(token)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return user
+  function initials(name){
+    return (name || "?").trim().charAt(0).toUpperCase();
+  }
 
+  // ---------------------------------------------------------------
+  // API helpers
+  // ---------------------------------------------------------------
+  // ---------------------------------------------------------------
+  // Session expiry — same pattern as Meet/Discord: any 401 anywhere
+  // (an API call, the websocket) means the session is no longer good,
+  // so we clear local state and land back on the first/login screen.
+  // ---------------------------------------------------------------
+  let sessionExpiredHandled = false;
+  function handleSessionExpired(message){
+    if (sessionExpiredHandled) return; // avoid piling up redirects/toasts
+    sessionExpiredHandled = true;
+    localStorage.removeItem("meet_token");
+    localStorage.removeItem("meet_user");
+    sessionStorage.removeItem("active_room");
+    toast(message || "Your session has expired. Please sign in again.");
+    setTimeout(() => { window.location.href = "/"; }, 1200);
+  }
 
-# --------------------------------------------------------------------------
-# App + middleware
-# --------------------------------------------------------------------------
+  async function apiFetch(path, opts = {}){
+    opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    if (state.token) opts.headers["Authorization"] = "Bearer " + state.token;
+    const res = await fetch(API + path, opts);
+    if (res.status === 401){
+      const body = await res.json().catch(() => ({}));
+      handleSessionExpired(body.detail);
+      throw new Error(body.detail || "Session expired");
+    }
+    if (!res.ok){
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || ("Request failed: " + res.status));
+    }
+    return res.json();
+  }
 
-app = FastAPI(
-    title="Meet App",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+  async function loginWithEmail(email){
+    const data = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ email }) });
+    state.token = data.token;
+    state.user = data;
+    localStorage.setItem("meet_token", data.token);
+    localStorage.setItem("meet_user", JSON.stringify(data));
+    return data;
+  }
 
+  // ---------------------------------------------------------------
+  // Routing: "/" -> dashboard (if logged in) or login. "/room/:id" -> room.
+  // ---------------------------------------------------------------
+  async function boot(){
+    const path = window.location.pathname;
+    const roomMatch = path.match(/^\/room\/([a-zA-Z0-9]+)/);
 
-class RequestLogMiddleware(BaseHTTPMiddleware):
-    """Custom FastAPI middleware: logs every request with timing + status."""
-
-    async def dispatch(self, request: Request, call_next):
-        start = time.perf_counter()
-        try:
-            response = await call_next(request)
-        except Exception:
-            logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-            raise
-        duration_ms = (time.perf_counter() - start) * 1000
-        logger.info(
-            "%s %s -> %s (%.1fms)",
-            request.method,
-            request.url.path,
-            response.status_code,
-            duration_ms,
-        )
-        response.headers["X-Process-Time-Ms"] = f"{duration_ms:.1f}"
-        return response
-
-
-app.add_middleware(RequestLogMiddleware)
-
-
-@app.on_event("startup")
-async def on_startup():
-    init_db()
-    if SELF_PING_URL:
-        asyncio.create_task(_keep_alive_loop())
-        logger.info("Keep-alive enabled: pinging %s every %ss", SELF_PING_URL, KEEP_ALIVE_INTERVAL_SECONDS)
-    else:
-        logger.info("Keep-alive disabled (set SELF_PING_URL or RENDER_EXTERNAL_URL to enable)")
-
-
-# --------------------------------------------------------------------------
-# Schemas
-# --------------------------------------------------------------------------
-
-class LoginRequest(BaseModel):
-    email: str
-
-
-class CreateMeetingRequest(BaseModel):
-    title: Optional[str] = "Untitled meeting"
-
-
-class ChatbotRequest(BaseModel):
-    meeting_id: str
-    message: str
-
-
-# --------------------------------------------------------------------------
-# Auth routes
-# --------------------------------------------------------------------------
-
-@app.post("/api/auth/login")
-def login(payload: LoginRequest):
-    email = payload.email.strip().lower()
-    if "@" not in email or "." not in email.split("@")[-1]:
-        raise HTTPException(status_code=400, detail="Enter a valid email address")
-
-    first_name = email.split("@")[0].split(".")[0].split("+")[0]
-    first_name = first_name.capitalize() if first_name else "Guest"
-
-    with get_db() as db:
-        existing = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        if existing:
-            token = secrets.token_hex(16)
-            db.execute("UPDATE users SET token = ? WHERE id = ?", (token, existing["id"]))
-            user_id = existing["id"]
-            name = existing["name"]
-        else:
-            user_id = str(uuid.uuid4())
-            token = secrets.token_hex(16)
-            name = first_name
-            db.execute(
-                "INSERT INTO users (id, email, name, token, created_at) VALUES (?, ?, ?, ?, ?)",
-                (user_id, email, name, token, now_iso()),
-            )
-
-    return {
-        "token": token,
-        "user_id": user_id,
-        "email": email,
-        "name": name,
-        "first_name": name.split(" ")[0],
-        "chatbot_unlocked": email == CHATBOT_ALLOWED_EMAIL,
+    if (state.token && state.user){
+      // Confirm the session is still good before showing anything that
+      // depends on it. A 401 here is handled globally by apiFetch, which
+      // clears storage and redirects to "/" - we just need to stop here.
+      try {
+        await apiFetch("/api/auth/me");
+      } catch (e) {
+        return;
+      }
     }
 
-
-# --------------------------------------------------------------------------
-# Meeting routes
-# --------------------------------------------------------------------------
-
-def short_id(n: int = 8) -> str:
-    return uuid.uuid4().hex[:n]
-
-
-@app.post("/api/meetings/create")
-def create_meeting(payload: CreateMeetingRequest, user: sqlite3.Row = Depends(require_user)):
-    meeting_id = short_id()
-    with get_db() as db:
-        # extremely unlikely collision, but guard anyway
-        while db.execute("SELECT 1 FROM meetings WHERE id = ?", (meeting_id,)).fetchone():
-            meeting_id = short_id()
-        db.execute(
-            "INSERT INTO meetings (id, title, host_id, created_at) VALUES (?, ?, ?, ?)",
-            (meeting_id, payload.title or "Untitled meeting", user["id"], now_iso()),
-        )
-    return {
-        "meeting_id": meeting_id,
-        "title": payload.title or "Untitled meeting",
-        "host_name": user["name"],
-        "join_path": f"/room/{meeting_id}",
-    }
-
-
-@app.get("/api/meetings/{meeting_id}")
-def get_meeting(meeting_id: str):
-    with get_db() as db:
-        meeting = db.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
-        if not meeting:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-        host = db.execute("SELECT name FROM users WHERE id = ?", (meeting["host_id"],)).fetchone()
-        participant_count = db.execute(
-            "SELECT COUNT(*) AS c FROM participants WHERE meeting_id = ?", (meeting_id,)
-        ).fetchone()["c"]
-    return {
-        "meeting_id": meeting["id"],
-        "title": meeting["title"],
-        "host_name": host["name"] if host else "Unknown",
-        "created_at": meeting["created_at"],
-        "participant_count": participant_count,
-    }
-
-
-@app.get("/api/meetings/{meeting_id}/messages")
-def get_messages(meeting_id: str):
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT sender_name, sender_email, text, is_bot, created_at "
-            "FROM messages WHERE meeting_id = ? ORDER BY id ASC",
-            (meeting_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.get("/api/ice-config")
-def ice_config():
-    """STUN/TURN servers for the browser's RTCPeerConnection."""
-    servers = [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]
-    if TURN_URL:
-        turn_entry = {"urls": [TURN_URL]}
-        if TURN_USERNAME:
-            turn_entry["username"] = TURN_USERNAME
-        if TURN_CREDENTIAL:
-            turn_entry["credential"] = TURN_CREDENTIAL
-        servers.append(turn_entry)
-    return {"iceServers": servers}
-
-
-# --------------------------------------------------------------------------
-# Call recordings (audio) - stored as BLOBs in SQLite
-# --------------------------------------------------------------------------
-
-@app.post("/api/recordings/upload")
-async def upload_recording(
-    meeting_id: str = Form(...),
-    file: UploadFile = File(...),
-    user: sqlite3.Row = Depends(require_user),
-):
-    with get_db() as db:
-        meeting = db.execute("SELECT id FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
-        if not meeting:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-    data = await file.read()
-    if len(data) > MAX_RECORDING_BYTES:
-        raise HTTPException(status_code=413, detail="Recording too large")
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty recording")
-
-    with get_db() as db:
-        cur = db.execute(
-            "INSERT INTO recordings (meeting_id, user_id, recorder_name, mime_type, audio_blob, size_bytes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (meeting_id, user["id"], user["name"], file.content_type or "audio/webm", data, len(data), now_iso()),
-        )
-        recording_id = cur.lastrowid
-
-    logger.info("Stored recording %s for meeting %s (%d bytes)", recording_id, meeting_id, len(data))
-    return {"recording_id": recording_id, "size_bytes": len(data)}
-
-
-@app.get("/api/meetings/{meeting_id}/recordings")
-def list_recordings(meeting_id: str, user: sqlite3.Row = Depends(require_user)):
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT id, recorder_name, mime_type, size_bytes, created_at FROM recordings "
-            "WHERE meeting_id = ? ORDER BY id DESC",
-            (meeting_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.get("/api/recordings/{recording_id}")
-def get_recording(recording_id: int, user: sqlite3.Row = Depends(require_user)):
-    with get_db() as db:
-        row = db.execute(
-            "SELECT audio_blob, mime_type FROM recordings WHERE id = ?", (recording_id,)
-        ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Recording not found")
-    return Response(content=row["audio_blob"], media_type=row["mime_type"])
-
-
-# --------------------------------------------------------------------------
-# Health + keep-alive (see SELF_PING_URL note above)
-# --------------------------------------------------------------------------
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "time": now_iso()}
-
-
-async def _keep_alive_loop():
-    async with httpx.AsyncClient(timeout=10) as client:
-        while True:
-            await asyncio.sleep(KEEP_ALIVE_INTERVAL_SECONDS)
-            try:
-                await client.get(SELF_PING_URL.rstrip("/") + "/health")
-                logger.info("Keep-alive ping sent to %s", SELF_PING_URL)
-            except Exception as e:
-                logger.warning("Keep-alive ping failed: %s", e)
-
-
-# --------------------------------------------------------------------------
-# Chatbot (Groq) - only unlocked for CHATBOT_ALLOWED_EMAIL
-# --------------------------------------------------------------------------
-
-@app.post("/api/chatbot")
-async def chatbot(payload: ChatbotRequest, user: sqlite3.Row = Depends(require_user)):
-    if user["email"].lower() != CHATBOT_ALLOWED_EMAIL:
-        raise HTTPException(status_code=403, detail="Chatbot is not available for this account")
-    if not GROQ_API_KEY:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured on the server")
-
-    with get_db() as db:
-        db.execute(
-            "INSERT INTO messages (meeting_id, sender_name, sender_email, text, is_bot, created_at) "
-            "VALUES (?, ?, ?, ?, 0, ?)",
-            (payload.meeting_id, user["name"], user["email"], payload.message, now_iso()),
-        )
-        history_rows = db.execute(
-            "SELECT sender_name, text, is_bot FROM messages "
-            "WHERE meeting_id = ? ORDER BY id DESC LIMIT 12",
-            (payload.meeting_id,),
-        ).fetchall()
-
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a concise, friendly meeting assistant embedded inside a video call app. "
-                "Help the user with quick answers, summaries, or meeting notes. Keep replies short."
-            ),
+    if (roomMatch){
+      const meetingId = roomMatch[1];
+      if (state.token && state.user){
+        if (sessionStorage.getItem("active_room") === meetingId){
+          // We were already "in" this exact room this tab-session, so this
+          // is a reload (F5), not a fresh navigation - confirm before
+          // silently reconnecting.
+          showRejoinGate(meetingId);
+        } else {
+          enterRoomFlow(meetingId);
         }
-    ]
-    for row in reversed(history_rows):
-        role = "assistant" if row["is_bot"] else "user"
-        messages.append({"role": role, "content": row["text"]})
+      } else {
+        // Ask for email before joining (per spec: joining via link asks for email)
+        $("#gate-overlay").classList.remove("hidden");
+        $("#gate-join-btn").onclick = async () => {
+          const email = $("#gate-email").value.trim();
+          $("#gate-error").style.display = "none";
+          try {
+            await loginWithEmail(email);
+            $("#gate-overlay").classList.add("hidden");
+            enterRoomFlow(meetingId);
+          } catch (e) {
+            $("#gate-error").textContent = e.message;
+            $("#gate-error").style.display = "block";
+          }
+        };
+      }
+      return;
+    }
 
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                GROQ_URL,
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={"model": GROQ_MODEL, "messages": messages, "temperature": 0.5, "max_tokens": 500},
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        reply = data["choices"][0]["message"]["content"].strip()
-    except httpx.HTTPStatusError as e:
-        logger.error("Groq API error: %s", e.response.text)
-        raise HTTPException(status_code=502, detail="Chatbot upstream error") from e
-    except Exception as e:
-        logger.exception("Chatbot failure")
-        raise HTTPException(status_code=502, detail="Chatbot failed to respond") from e
+    if (state.token && state.user){
+      showDashboard();
+    } else {
+      showScreen("#screen-login");
+    }
+  }
 
-    with get_db() as db:
-        db.execute(
-            "INSERT INTO messages (meeting_id, sender_name, sender_email, text, is_bot, created_at) "
-            "VALUES (?, ?, ?, ?, 1, ?)",
-            (payload.meeting_id, "Meet Assistant", None, reply, now_iso()),
-        )
+  // ---------------------------------------------------------------
+  // Reload / rejoin gate
+  // ---------------------------------------------------------------
+  let rejoinTimer = null;
 
-    return {"reply": reply}
+  function showRejoinGate(meetingId){
+    $("#rejoin-overlay").classList.remove("hidden");
+    let secondsLeft = 30;
+    $("#rejoin-countdown").textContent = secondsLeft;
 
+    const cleanup = () => {
+      if (rejoinTimer) clearInterval(rejoinTimer);
+      rejoinTimer = null;
+      $("#rejoin-overlay").classList.add("hidden");
+      $("#rejoin-cancel-btn").onclick = null;
+      $("#rejoin-confirm-btn").onclick = null;
+    };
 
-# --------------------------------------------------------------------------
-# WebSocket signaling + live chat + presence
-# --------------------------------------------------------------------------
+    rejoinTimer = setInterval(() => {
+      secondsLeft -= 1;
+      $("#rejoin-countdown").textContent = secondsLeft;
+      if (secondsLeft <= 0){
+        cleanup();
+        leaveToDashboard();
+      }
+    }, 1000);
 
-class RoomManager:
-    """Tracks active WebSocket connections per meeting room (in-memory)."""
+    $("#rejoin-cancel-btn").onclick = () => {
+      cleanup();
+      leaveToDashboard();
+    };
 
-    def __init__(self):
-        self.rooms: dict[str, dict[str, WebSocket]] = {}
+    $("#rejoin-confirm-btn").onclick = () => {
+      cleanup();
+      // Rejoin right here, in the same window/tab - never a new one.
+      enterRoomFlow(meetingId);
+    };
+  }
 
-    async def join(self, meeting_id: str, peer_id: str, ws: WebSocket):
-        await ws.accept()
-        self.rooms.setdefault(meeting_id, {})[peer_id] = ws
+  function leaveToDashboard(){
+    sessionStorage.removeItem("active_room");
+    window.location.href = "/";
+  }
 
-    def leave(self, meeting_id: str, peer_id: str):
-        peers = self.rooms.get(meeting_id)
-        if peers and peer_id in peers:
-            del peers[peer_id]
-        if peers is not None and not peers:
-            self.rooms.pop(meeting_id, None)
+  // ---------------------------------------------------------------
+  // Login screen
+  // ---------------------------------------------------------------
+  $("#login-btn").addEventListener("click", async () => {
+    const email = $("#login-email").value.trim();
+    $("#login-error").style.display = "none";
+    try {
+      await loginWithEmail(email);
+      showDashboard();
+    } catch (e) {
+      $("#login-error").textContent = e.message;
+      $("#login-error").style.display = "block";
+    }
+  });
+  $("#login-email").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#login-btn").click(); });
 
-    def peers_in(self, meeting_id: str) -> dict[str, WebSocket]:
-        return self.rooms.get(meeting_id, {})
+  // ---------------------------------------------------------------
+  // Dashboard
+  // ---------------------------------------------------------------
+  function showDashboard(){
+    $("#dash-greeting").textContent = "Hi, " + (state.user.first_name || state.user.name);
+    $("#dash-avatar").textContent = initials(state.user.first_name || state.user.name);
+    showScreen("#screen-dashboard");
+    history.replaceState({}, "", "/");
+  }
 
-    async def send_to(self, meeting_id: str, peer_id: str, message: dict):
-        ws = self.rooms.get(meeting_id, {}).get(peer_id)
-        if ws:
-            await ws.send_json(message)
+  $("#create-meeting-btn").addEventListener("click", async () => {
+    try {
+      const data = await apiFetch("/api/meetings/create", { method: "POST", body: JSON.stringify({ title: "Quick meeting" }) });
+      const url = window.location.origin + "/room/" + data.meeting_id;
+      $("#link-text").textContent = url;
+      $("#link-result").style.display = "block";
+      $("#link-result").dataset.meetingId = data.meeting_id;
+      $("#link-result").dataset.url = url;
+    } catch (e) { toast(e.message); }
+  });
 
-    async def broadcast(self, meeting_id: str, message: dict, exclude: Optional[str] = None):
-        for pid, ws in list(self.peers_in(meeting_id).items()):
-            if pid == exclude:
-                continue
-            try:
-                await ws.send_json(message)
-            except Exception:
-                pass
+  $("#copy-link-btn").addEventListener("click", () => {
+    navigator.clipboard.writeText($("#link-result").dataset.url);
+    toast("Link copied to clipboard");
+  });
 
+  $("#enter-meeting-btn").addEventListener("click", () => {
+    const id = $("#link-result").dataset.meetingId;
+    window.location.href = "/room/" + id;
+  });
 
-manager = RoomManager()
+  $("#join-code-btn").addEventListener("click", () => {
+    let code = $("#join-code-input").value.trim();
+    const m = code.match(/room\/([a-zA-Z0-9]+)/);
+    if (m) code = m[1];
+    if (!code) { toast("Enter a meeting code or link"); return; }
+    window.location.href = "/room/" + code;
+  });
 
+  // ---------------------------------------------------------------
+  // Room flow
+  // ---------------------------------------------------------------
+  async function enterRoomFlow(meetingId){
+    state.meetingId = meetingId;
+    sessionStorage.setItem("active_room", meetingId);
+    showScreen("#screen-room");
+    history.replaceState({}, "", "/room/" + meetingId);
+    $("#room-code-label").textContent = meetingId;
 
-@app.websocket("/ws/{meeting_id}")
-async def signaling_ws(websocket: WebSocket, meeting_id: str, token: str = "", name: str = "Guest"):
-    user = get_user_by_token(token) if token else None
-    display_name = user["name"] if user else (name or "Guest")
-    email = user["email"] if user else None
-    peer_id = uuid.uuid4().hex[:10]
+    // chatbot only unlocked for the configured email
+    if (state.user.chatbot_unlocked){
+      $("#bot-fab").style.display = "flex";
+    }
 
-    with get_db() as db:
-        meeting = db.execute("SELECT id FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
-    if not meeting:
-        await websocket.close(code=4404)
-        return
+    try {
+      const ice = await apiFetch("/api/ice-config");
+      if (ice.iceServers && ice.iceServers.length) state.iceServers = ice.iceServers;
+    } catch (e) { /* fall back to default STUN */ }
 
-    await manager.join(meeting_id, peer_id, websocket)
+    try {
+      await apiFetch("/api/meetings/" + meetingId).catch(() => { throw new Error("This meeting link is invalid."); });
+    } catch (e) { toast(e.message); }
 
-    with get_db() as db:
-        db.execute(
-            "INSERT INTO participants (meeting_id, user_id, name, email, joined_at) VALUES (?, ?, ?, ?, ?)",
-            (meeting_id, user["id"] if user else None, display_name, email, now_iso()),
-        )
+    // camera/mic permission
+    if (window.location.hostname !== "localhost" && window.location.protocol === "http:"){
+      // Chrome only persists camera/mic grants ("Allow on every visit") for
+      // https:// origins or the literal hostname "localhost" - an IP like
+      // 127.0.0.1 over plain http only ever gets a session-scoped grant, so
+      // it re-prompts on every reload. Nothing in this app can change that;
+      // pointing it out beats a silent repeated prompt.
+      toast("Tip: open this via http://localhost:" + (window.location.port || "80") + " instead of the IP — Chrome will then remember your camera/mic choice.");
+    }
+    try {
+      state.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch (e) {
+      toast("Camera/mic permission denied — you can still join without them.");
+      state.localStream = new MediaStream();
+    }
+    state.cameraTrack = state.localStream.getVideoTracks()[0] || null;
+    renderLocalTile();
+    startAudioRecording();
 
-    # Tell the newcomer who is already in the room
-    existing_peers = [pid for pid in manager.peers_in(meeting_id) if pid != peer_id]
-    await manager.send_to(
-        meeting_id,
-        peer_id,
-        {"type": "welcome", "peer_id": peer_id, "existing_peers": existing_peers, "name": display_name},
-    )
+    // load chat history
+    try {
+      const history = await apiFetch("/api/meetings/" + meetingId + "/messages");
+      history.forEach(renderChatMessage);
+    } catch (e) { /* ignore */ }
 
-    # Notify everyone else that a new participant joined
-    await manager.broadcast(
-        meeting_id,
-        {"type": "peer-joined", "peer_id": peer_id, "name": display_name},
-        exclude=peer_id,
-    )
+    connectSignaling(meetingId);
+  }
 
-    try:
-        while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
+  function renderLocalTile(){
+    const grid = $("#video-grid");
+    let tile = document.getElementById("tile-local");
+    if (!tile){
+      tile = el("div", "tile mirrored");
+      tile.id = "tile-local";
+      const video = el("video");
+      video.autoplay = true; video.muted = true; video.playsInline = true;
+      tile.appendChild(video);
+      const tag = el("div", "name-tag");
+      tag.textContent = (state.user.first_name || state.user.name) + " (You)";
+      tile.appendChild(tag);
+      grid.prepend(tile);
+    }
+    tile.querySelector("video").srcObject = state.localStream;
+  }
 
-            if msg_type in ("offer", "answer", "ice-candidate"):
-                target = data.get("target")
-                if target:
-                    await manager.send_to(
-                        meeting_id,
-                        target,
-                        {**data, "from": peer_id, "name": display_name},
-                    )
+  function addRemoteTile(peerId, name){
+    let tile = document.getElementById("tile-" + peerId);
+    if (tile) return tile;
+    tile = el("div", "tile");
+    tile.id = "tile-" + peerId;
+    const video = el("video");
+    video.autoplay = true; video.playsInline = true;
+    tile.appendChild(video);
+    const badge = el("div", "avatar-fallback");
+    badge.textContent = initials(name);
+    tile.appendChild(badge);
+    const tag = el("div", "name-tag");
+    tag.textContent = name;
+    tile.appendChild(tag);
+    $("#video-grid").appendChild(tile);
+    return tile;
+  }
 
-            elif msg_type == "chat-message":
-                text = (data.get("text") or "").strip()
-                if not text:
-                    continue
-                with get_db() as db:
-                    db.execute(
-                        "INSERT INTO messages (meeting_id, sender_name, sender_email, text, is_bot, created_at) "
-                        "VALUES (?, ?, ?, ?, 0, ?)",
-                        (meeting_id, display_name, email, text, now_iso()),
-                    )
-                await manager.broadcast(
-                    meeting_id,
-                    {
-                        "type": "chat-message",
-                        "from": peer_id,
-                        "name": display_name,
-                        "text": text,
-                        "created_at": now_iso(),
-                    },
-                )
+  function removeRemoteTile(peerId){
+    const tile = document.getElementById("tile-" + peerId);
+    if (tile) tile.remove();
+  }
 
-            elif msg_type == "media-state":
-                # e.g. mic muted, camera off, screen-sharing started/stopped
-                await manager.broadcast(
-                    meeting_id,
-                    {"type": "media-state", "from": peer_id, "name": display_name, "state": data.get("state")},
-                    exclude=peer_id,
-                )
+  function updateTileName(peerId, name){
+    const tile = document.getElementById("tile-" + peerId);
+    if (tile) {
+      const tag = tile.querySelector(".name-tag");
+      if (tag) tag.textContent = name;
+      const fb = tile.querySelector(".avatar-fallback");
+      if (fb) fb.textContent = initials(name);
+    }
+  }
 
-    except WebSocketDisconnect:
-        pass
-    finally:
-        manager.leave(meeting_id, peer_id)
-        await manager.broadcast(meeting_id, {"type": "peer-left", "peer_id": peer_id, "name": display_name})
+  // ---------------------------------------------------------------
+  // Audio recording — mixes local mic + every remote participant's audio
+  // into one track via the Web Audio API, records it with MediaRecorder,
+  // and uploads the result to the backend (stored as a BLOB in SQLite) on leave.
+  // ---------------------------------------------------------------
+  function startAudioRecording(){
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      state.audioCtx = new AudioContextCtor();
+      state.recordDest = state.audioCtx.createMediaStreamDestination();
 
+      addStreamToRecording(state.localStream);
 
-# --------------------------------------------------------------------------
-# Frontend
-# --------------------------------------------------------------------------
+      const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+      const mimeType = mimeCandidates.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+      if (!window.MediaRecorder) { console.warn("MediaRecorder not supported — recording disabled."); return; }
 
-FRONTEND_PATH = os.path.join(os.path.dirname(__file__), "zindex.html")
+      state.recorder = mimeType
+        ? new MediaRecorder(state.recordDest.stream, { mimeType })
+        : new MediaRecorder(state.recordDest.stream);
+      state.recordedChunks = [];
+      state.recorder.ondataavailable = (evt) => { if (evt.data && evt.data.size > 0) state.recordedChunks.push(evt.data); };
+      state.recorder.start(1000); // gather in 1s chunks so a crash doesn't lose everything
+      $("#rec-indicator").style.display = "inline";
+    } catch (e) {
+      console.warn("Could not start audio recording:", e);
+    }
+  }
 
+  function addStreamToRecording(stream){
+    if (!state.audioCtx || !state.recordDest) return;
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length || state.connectedAudioSources.has(stream.id)) return;
+    try {
+      const source = state.audioCtx.createMediaStreamSource(new MediaStream(audioTracks));
+      source.connect(state.recordDest);
+      state.connectedAudioSources.add(stream.id);
+    } catch (e) { /* stream may already be connected or context closed */ }
+  }
 
-@app.get("/", response_class=HTMLResponse)
-def serve_index():
-    with open(FRONTEND_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+  async function stopAndUploadRecording(){
+    if (!state.recorder || state.recorder.state === "inactive") return;
+    const stopped = new Promise((resolve) => { state.recorder.onstop = resolve; });
+    state.recorder.stop();
+    await stopped;
+    $("#rec-indicator").style.display = "none";
+    if (!state.recordedChunks.length) return;
 
+    const blob = new Blob(state.recordedChunks, { type: state.recorder.mimeType || "audio/webm" });
+    const form = new FormData();
+    form.append("meeting_id", state.meetingId);
+    form.append("file", blob, "recording.webm");
+    try {
+      const res = await fetch("/api/recordings/upload", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + state.token },
+        body: form,
+      });
+      // Leaving already sends us to "/" right after this call, so on a 401
+      // (expired session) we just skip the upload quietly instead of also
+      // firing the session-expired redirect mid-leave.
+      if (!res.ok) console.warn("Recording upload failed:", res.status);
+    } catch (e) {
+      console.warn("Recording upload failed:", e);
+    }
+  }
 
-@app.get("/room/{meeting_id}", response_class=HTMLResponse)
-def serve_room(meeting_id: str):
-    with open(FRONTEND_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+  // ---------------------------------------------------------------
+  // WebRTC signaling over WebSocket
+  // ---------------------------------------------------------------
+  function connectSignaling(meetingId){
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const name = encodeURIComponent(state.user.first_name || state.user.name);
+    const url = `${proto}://${window.location.host}/ws/${meetingId}?token=${state.token}&name=${name}`;
+    const ws = new WebSocket(url);
+    state.ws = ws;
 
+    ws.onmessage = async (evt) => {
+      const data = JSON.parse(evt.data);
+      switch (data.type){
+        case "welcome":
+          state.peerId = data.peer_id;
+          for (const existingId of data.existing_peers){
+            await createPeerConnection(existingId, true);
+          }
+          break;
+        case "peer-joined":
+          toast(data.name + " joined the meeting");
+          addRemoteTile(data.peer_id, data.name);
+          break;
+        case "offer": {
+          const pc = await createPeerConnection(data.from, false, data.name);
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          ws.send(JSON.stringify({ type: "answer", target: data.from, sdp: answer }));
+          break;
+        }
+        case "answer": {
+          const peer = state.peers[data.from];
+          if (peer) {
+            await peer.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            // We only learn the existing peer's real name once they answer -
+            // update the tile that was created with the "Connecting…" placeholder.
+            peer.name = data.name || peer.name;
+            updateTileName(data.from, peer.name);
+          }
+          break;
+        }
+        case "ice-candidate": {
+          const peer = state.peers[data.from];
+          if (peer && data.candidate) {
+            try { await peer.pc.addIceCandidate(data.candidate); } catch (e) {}
+          }
+          break;
+        }
+        case "peer-left":
+          toast(data.name + " left the meeting");
+          if (state.peers[data.peer_id]) { state.peers[data.peer_id].pc.close(); delete state.peers[data.peer_id]; }
+          removeRemoteTile(data.peer_id);
+          break;
+        case "chat-message":
+          if (data.from !== state.peerId){
+            renderChatMessage({ sender_name: data.name, text: data.text, created_at: data.created_at, self: false });
+            if ($("#chat-panel").classList.contains("hidden")){
+              toast(data.name + ": " + data.text.slice(0, 60));
+            }
+          }
+          break;
+        case "media-state":
+          updateRemoteMediaBadge(data.from, data.state);
+          break;
+        case "kicked":
+          toast("You joined this meeting from another window — this tab has been disconnected.");
+          sessionStorage.removeItem("active_room");
+          setTimeout(() => { window.location.href = "/"; }, 1500);
+          break;
+      }
+    };
 
-@app.exception_handler(404)
-async def not_found(request: Request, exc):
-    return JSONResponse(status_code=404, content={"detail": "Not found"})
+    ws.onclose = (evt) => {
+      if (evt.code === 4401){
+        handleSessionExpired("Your session has expired. Please sign in again.");
+      }
+    };
+    ws.onerror = () => toast("Connection issue — signaling channel dropped.");
+  }
 
+  async function createPeerConnection(peerId, isInitiator, name){
+    if (state.peers[peerId]) return state.peers[peerId].pc;
 
-if __name__ == "__main__":
-    import uvicorn
+    const pc = new RTCPeerConnection({ iceServers: state.iceServers });
+    state.peers[peerId] = { pc, name: name || "Guest" };
 
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True)
+    // Show a placeholder tile the instant we know about this peer — on both
+    // the offering side and the answering side — so nobody stares at an
+    // empty grid while ICE/SDP negotiation finishes in the background.
+    addRemoteTile(peerId, name || "Connecting…");
+
+    state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
+
+    pc.onicecandidate = (evt) => {
+      if (evt.candidate){
+        state.ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: evt.candidate }));
+      }
+    };
+
+    pc.ontrack = (evt) => {
+      const tile = addRemoteTile(peerId, state.peers[peerId].name);
+      updateTileName(peerId, state.peers[peerId].name);
+      const video = tile.querySelector("video");
+      if (video.srcObject !== evt.streams[0]) {
+        video.srcObject = evt.streams[0];
+        // Safari/iOS in particular can refuse autoplay-with-audio silently;
+        // retry the play() call and surface a click-to-play affordance instead
+        // of leaving the tile looking "stuck".
+        video.play().catch(() => {
+          const hint = el("div", "name-tag");
+          hint.textContent = "Tap to play";
+          hint.style.cursor = "pointer";
+          hint.style.right = "10px"; hint.style.left = "auto";
+          hint.onclick = () => { video.play(); hint.remove(); };
+          tile.appendChild(hint);
+        });
+      }
+      const fb = tile.querySelector(".avatar-fallback");
+      if (fb) fb.remove();
+      addStreamToRecording(evt.streams[0]);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("ICE state for", peerId, "->", pc.iceConnectionState);
+      if (pc.iceConnectionState === "failed") {
+        toast("Connection to " + (state.peers[peerId]?.name || "a participant") + " failed — likely needs a TURN server for this network.");
+      }
+    };
+
+    if (isInitiator){
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+    }
+
+    return pc;
+  }
+
+  function updateRemoteMediaBadge(peerId, mstate){
+    const tile = document.getElementById("tile-" + peerId);
+    if (!tile) return;
+    let badge = tile.querySelector(".mic-off-badge");
+    if (!badge){
+      badge = el("div", "mic-off-badge");
+      badge.textContent = "🔇";
+      tile.appendChild(badge);
+    }
+    badge.style.display = (mstate && mstate.mic === false) ? "flex" : "none";
+  }
+
+  // ---------------------------------------------------------------
+  // Controls: mic, camera, screen share, chat, leave
+  // ---------------------------------------------------------------
+  function broadcastMediaState(){
+    if (state.ws && state.ws.readyState === 1){
+      state.ws.send(JSON.stringify({ type: "media-state", state: { mic: state.micOn, cam: state.camOn, screen: state.screenOn } }));
+    }
+  }
+
+  $("#toggle-mic-btn").addEventListener("click", () => {
+    state.micOn = !state.micOn;
+    state.localStream.getAudioTracks().forEach(t => t.enabled = state.micOn);
+    $("#toggle-mic-btn").classList.toggle("off", !state.micOn);
+    $("#toggle-mic-btn").classList.toggle("active", state.micOn);
+    $("#toggle-mic-btn").textContent = state.micOn ? "🎤" : "🔇";
+    broadcastMediaState();
+  });
+
+  $("#toggle-cam-btn").addEventListener("click", () => {
+    state.camOn = !state.camOn;
+    state.localStream.getVideoTracks().forEach(t => t.enabled = state.camOn);
+    $("#toggle-cam-btn").classList.toggle("off", !state.camOn);
+    $("#toggle-cam-btn").classList.toggle("active", state.camOn);
+    broadcastMediaState();
+  });
+
+  $("#toggle-screen-btn").addEventListener("click", async () => {
+    if (!state.screenOn){
+      try {
+        state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch (e) { return; }
+      const screenTrack = state.screenStream.getVideoTracks()[0];
+      Object.values(state.peers).forEach(({ pc }) => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (sender) sender.replaceTrack(screenTrack);
+      });
+      document.querySelector("#tile-local video").srcObject = state.screenStream;
+      document.getElementById("tile-local").classList.remove("mirrored");
+      state.screenOn = true;
+      $("#toggle-screen-btn").classList.add("active");
+      screenTrack.onended = () => stopScreenShare();
+    } else {
+      stopScreenShare();
+    }
+    broadcastMediaState();
+  });
+
+  function stopScreenShare(){
+    if (state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
+    state.screenOn = false;
+    $("#toggle-screen-btn").classList.remove("active");
+    if (state.cameraTrack){
+      Object.values(state.peers).forEach(({ pc }) => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (sender) sender.replaceTrack(state.cameraTrack);
+      });
+      document.querySelector("#tile-local video").srcObject = state.localStream;
+      document.getElementById("tile-local").classList.add("mirrored");
+    }
+  }
+
+  $("#toggle-chat-btn").addEventListener("click", () => {
+    $("#chat-panel").classList.toggle("hidden");
+    $("#toggle-chat-btn").classList.toggle("active");
+  });
+
+  $("#leave-btn").addEventListener("click", async () => {
+    $("#leave-btn").disabled = true;
+    $("#leave-btn").textContent = "Leaving…";
+    sessionStorage.removeItem("active_room");
+    await stopAndUploadRecording();
+    Object.values(state.peers).forEach(({ pc }) => pc.close());
+    state.peers = {};
+    if (state.ws) state.ws.close();
+    if (state.localStream) state.localStream.getTracks().forEach(t => t.stop());
+    if (state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
+    if (state.audioCtx) state.audioCtx.close();
+    document.querySelectorAll('[id^="tile-"]').forEach(t => t.remove());
+    window.location.href = "/";
+  });
+
+  // ---------------------------------------------------------------
+  // In-call chat
+  // ---------------------------------------------------------------
+  function renderChatMessage(msg){
+    const wrap = el("div", "msg" + (msg.self ? " self" : ""));
+    const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    wrap.innerHTML = `<div class="msg-name">${escapeHtml(msg.sender_name || msg.name)}<span class="msg-time">${time}</span></div><div>${escapeHtml(msg.text)}</div>`;
+    $("#chat-messages").appendChild(wrap);
+    $("#chat-messages").scrollTop = $("#chat-messages").scrollHeight;
+  }
+
+  function escapeHtml(str){
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  function sendChat(){
+    const input = $("#chat-input");
+    const text = input.value.trim();
+    if (!text || !state.ws) return;
+    // Render immediately for the sender (optimistic) instead of waiting for
+    // the server's broadcast round-trip, so your own messages never feel
+    // slower than the other side's. The server still broadcasts to everyone
+    // (including us), but the "kicked"-style from === peerId check in
+    // ws.onmessage skips re-rendering our own echoed copy.
+    renderChatMessage({
+      sender_name: state.user.first_name || state.user.name,
+      text,
+      created_at: new Date().toISOString(),
+      self: true,
+    });
+    state.ws.send(JSON.stringify({ type: "chat-message", text }));
+    input.value = "";
+  }
+  $("#chat-send-btn").addEventListener("click", sendChat);
+  $("#chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+
+  // ---------------------------------------------------------------
+  // Chatbot popup (Groq)
+  // ---------------------------------------------------------------
+  $("#bot-fab").addEventListener("click", () => $("#bot-panel").classList.add("open"));
+  $("#bot-close-btn").addEventListener("click", () => $("#bot-panel").classList.remove("open"));
+
+  async function sendBotMessage(){
+    const input = $("#bot-input");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    appendBotMsg(text, "user");
+    const typingEl = appendBotMsg("Thinking…", "bot typing");
+    try {
+      const data = await apiFetch("/api/chatbot", {
+        method: "POST",
+        body: JSON.stringify({ meeting_id: state.meetingId, message: text }),
+      });
+      typingEl.remove();
+      appendBotMsg(data.reply, "bot");
+    } catch (e) {
+      typingEl.remove();
+      appendBotMsg("Sorry, I couldn't respond: " + e.message, "bot");
+    }
+  }
+  function appendBotMsg(text, cls){
+    const wrap = el("div", "bot-msg " + cls);
+    wrap.textContent = text;
+    $("#bot-messages").appendChild(wrap);
+    $("#bot-messages").scrollTop = $("#bot-messages").scrollHeight;
+    return wrap;
+  }
+  $("#bot-send-btn").addEventListener("click", sendBotMessage);
+  $("#bot-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendBotMessage(); });
+
+  // ---------------------------------------------------------------
+  // Copy invite link from inside the room
+  // ---------------------------------------------------------------
+  $("#room-copy-btn").addEventListener("click", () => {
+    navigator.clipboard.writeText(window.location.origin + "/room/" + state.meetingId);
+    toast("Invite link copied");
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
