@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Signal — Meet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B1220;
+    --panel:#111A2D;
+    --panel-2:#182446;
+    --panel-3:#1F2C52;
+    --border:rgba(255,255,255,0.08);
+    --border-strong:rgba(255,255,255,0.16);
+    --text:#E8ECF3;
+    --text-dim:#8B93A8;
+    --text-dimmer:#5C6478;
+    --accent:#6C5CE7;
+    --accent-2:#8B7CF6;
+    --accent-soft:rgba(108,92,231,0.15);
+    --live:#FF6B4A;
+    --success:#33D69F;
+    --danger:#FF5470;
+    --radius:14px;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-body:'Inter',sans-serif;
+    --font-mono:'JetBrains Mono',monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:
+      radial-gradient(circle at 15% 0%, rgba(108,92,231,0.12), transparent 45%),
+      radial-gradient(circle at 85% 100%, rgba(255,107,74,0.08), transparent 40%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    min-height:100%;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;}
+  button{font-family:inherit;}
+  ::selection{background:var(--accent); color:#fff;}
+  :focus-visible{outline:2px solid var(--accent-2); outline-offset:2px;}
+
+  .screen{display:none; min-height:100vh;}
+  .screen.active{display:flex;}
+
+  /* ---------- shared bits ---------- */
+  .brand{
+    display:flex; align-items:center; gap:10px;
+    font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:-0.02em;
+  }
+  .brand .pulse-dot{
+    width:9px; height:9px; border-radius:50%; background:var(--live);
+    box-shadow:0 0 0 0 rgba(255,107,74,0.6);
+    animation:pulse 2s infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 rgba(255,107,74,0.55); }
+    70%{ box-shadow:0 0 0 8px rgba(255,107,74,0); }
+    100%{ box-shadow:0 0 0 0 rgba(255,107,74,0); }
+  }
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border-radius:10px; border:1px solid var(--border-strong);
+    background:var(--panel-2); color:var(--text);
+    font-weight:600; font-size:14px; padding:11px 18px; cursor:pointer;
+    transition:transform .12s ease, background .15s ease, border-color .15s ease;
+  }
+  .btn:hover{ background:var(--panel-3); border-color:var(--accent-2); }
+  .btn:active{ transform:scale(0.97); }
+  .btn-primary{ background:linear-gradient(135deg, var(--accent), var(--accent-2)); border:none; }
+  .btn-primary:hover{ filter:brightness(1.08); background:linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .btn-ghost{ background:transparent; border-color:var(--border); }
+  .btn-danger{ background:var(--danger); border:none; color:#fff; }
+  .btn-danger:hover{ background:#ff2f57; }
+  .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+  input[type=text], input[type=email]{
+    width:100%; background:var(--panel); border:1px solid var(--border-strong);
+    color:var(--text); border-radius:10px; padding:13px 14px; font-size:15px;
+    font-family:inherit;
+  }
+  input::placeholder{ color:var(--text-dimmer); }
+  .field-label{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-dim); font-weight:600; margin-bottom:8px; display:block; }
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  }
+  .toast-stack{ position:fixed; top:20px; right:20px; z-index:999; display:flex; flex-direction:column; gap:10px; }
+  .toast{
+    background:var(--panel-2); border:1px solid var(--border-strong); border-left:3px solid var(--accent-2);
+    border-radius:10px; padding:12px 16px; font-size:13px; min-width:220px;
+    animation:slideIn .25s ease;
+    box-shadow:0 10px 30px rgba(0,0,0,0.35);
+  }
+  @keyframes slideIn{ from{ transform:translateX(30px); opacity:0;} to{ transform:translateX(0); opacity:1;} }
+
+  /* ---------- LOGIN ---------- */
+  #screen-login{ align-items:center; justify-content:center; padding:24px; }
+  .login-box{ width:100%; max-width:380px; text-align:center; }
+  .login-box .brand{ justify-content:center; margin-bottom:8px; }
+  .login-box p.sub{ color:var(--text-dim); font-size:14px; margin-bottom:32px; }
+  .login-card{ padding:28px; text-align:left; }
+  .login-card .btn-primary{ width:100%; margin-top:16px; padding:13px; }
+  #login-error{ color:var(--danger); font-size:13px; margin-top:10px; display:none; }
+
+  /* ---------- DASHBOARD ---------- */
+  #screen-dashboard{ flex-direction:column; width:100%; }
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 32px; border-bottom:1px solid var(--border);
+  }
+  .who{ display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text-dim); }
+  .who .avatar{
+    width:32px; height:32px; border-radius:50%; background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff;
+    font-family:var(--font-display);
+  }
+  .dash-main{ flex:1; display:flex; align-items:flex-start; justify-content:center; padding:64px 24px; }
+  .dash-grid{ width:100%; max-width:920px; display:grid; grid-template-columns:1.1fr 0.9fr; gap:24px; }
+  @media (max-width:760px){ .dash-grid{ grid-template-columns:1fr; } }
+  .dash-hero{ padding:40px; display:flex; flex-direction:column; justify-content:center; }
+  .dash-hero h1{ font-family:var(--font-display); font-size:32px; font-weight:700; letter-spacing:-0.02em; line-height:1.15; margin-bottom:10px; }
+  .dash-hero p{ color:var(--text-dim); font-size:14px; margin-bottom:26px; line-height:1.6; }
+  .dash-side{ padding:28px; display:flex; flex-direction:column; gap:14px; }
+  .dash-side h3{ font-family:var(--font-display); font-size:15px; margin-bottom:4px; }
+  .link-result{ margin-top:18px; display:none; }
+  .link-row{
+    display:flex; align-items:center; gap:8px; background:var(--panel-2); border:1px solid var(--border-strong);
+    border-radius:10px; padding:10px 12px; font-family:var(--font-mono); font-size:13px; overflow:hidden;
+  }
+  .link-row span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; color:var(--accent-2); }
+  .divider-or{ display:flex; align-items:center; gap:10px; color:var(--text-dimmer); font-size:12px; margin:6px 0; }
+  .divider-or::before, .divider-or::after{ content:""; flex:1; height:1px; background:var(--border); }
+  .dash-main{ flex-direction:column; align-items:center; }
+  .about-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:18px; }
+  .about-item-title{ font-weight:600; font-size:13px; margin-bottom:6px; }
+  .about-item p{ color:var(--text-dimmer); font-size:12px; line-height:1.6; }
+
+  /* ---------- ROOM ---------- */
+  #screen-room{ flex-direction:column; width:100%; height:100vh; overflow:hidden; }
+  .room-topbar{
+    display:flex; align-items:center; justify-content:space-between; padding:14px 22px;
+    border-bottom:1px solid var(--border); flex-shrink:0;
+  }
+  .room-topbar .meta{ display:flex; align-items:center; gap:14px; }
+  .room-topbar .meta .code{ font-family:var(--font-mono); font-size:12px; color:var(--text-dim); background:var(--panel-2); padding:5px 10px; border-radius:8px; }
+  .room-body{ flex:1; display:flex; min-height:0; }
+  .video-area{ flex:1; padding:18px; overflow-y:auto; }
+  .video-grid{
+    display:grid; gap:14px; height:100%;
+    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    grid-auto-rows:minmax(180px, 1fr);
+  }
+  .tile{
+    position:relative; background:#060A14; border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .tile video{ width:100%; height:100%; object-fit:cover; }
+  .tile.mirrored video{ transform:scaleX(-1); }
+  .tile .name-tag{
+    position:absolute; bottom:10px; left:10px; background:rgba(6,10,20,0.65); backdrop-filter:blur(6px);
+    padding:5px 10px; border-radius:8px; font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px;
+  }
+  .tile .avatar-fallback{
+    width:64px; height:64px; border-radius:50%; background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-size:24px; font-weight:700; color:#fff;
+  }
+  .tile .mic-off-badge{
+    position:absolute; top:10px; right:10px; width:26px; height:26px; border-radius:50%; background:var(--danger);
+    display:none; align-items:center; justify-content:center; font-size:12px;
+  }
+
+  .chat-panel{
+    width:320px; flex-shrink:0; border-left:1px solid var(--border); display:flex; flex-direction:column;
+  }
+  .chat-panel.hidden{ display:none; }
+  .chat-header{ padding:16px 18px; border-bottom:1px solid var(--border); font-family:var(--font-display); font-weight:600; font-size:14px; }
+  .chat-messages{ flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
+  .msg{ font-size:13px; line-height:1.45; }
+  .msg .msg-name{ font-weight:700; font-size:12px; color:var(--accent-2); margin-bottom:2px; }
+  .msg.self .msg-name{ color:var(--success); }
+  .msg .msg-time{ color:var(--text-dimmer); font-size:10px; margin-left:6px; font-weight:400; }
+  .chat-input-row{ padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; }
+  .chat-input-row input{ flex:1; padding:10px 12px; font-size:13px; }
+  .chat-input-row button{ padding:10px 14px; }
+
+  .controls-bar{
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    padding:16px; border-top:1px solid var(--border); flex-shrink:0; background:var(--panel);
+  }
+  .ctrl-btn{
+    width:48px; height:48px; border-radius:50%; border:1px solid var(--border-strong); background:var(--panel-2);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px; color:var(--text);
+    transition:all .15s ease; position:relative;
+  }
+  .ctrl-btn:hover{ background:var(--panel-3); }
+  .ctrl-btn.off{ background:var(--danger); border-color:var(--danger); }
+  .ctrl-btn.active{ background:var(--accent); border-color:var(--accent); }
+  .ctrl-btn.leave{ background:var(--danger); border-color:var(--danger); width:auto; padding:0 22px; border-radius:24px; font-size:14px; font-weight:600; gap:8px; }
+  .ctrl-btn.leave:hover{ background:#ff2f57; }
+  .ctrl-sep{ width:1px; height:28px; background:var(--border); margin:0 4px; }
+
+  /* ---------- CHATBOT POPUP ---------- */
+  #bot-fab{
+    position:fixed; bottom:24px; right:24px; width:56px; height:56px; border-radius:50%;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2)); border:none; cursor:pointer;
+    display:none; align-items:center; justify-content:center; font-size:24px; color:#fff;
+    box-shadow:0 10px 30px rgba(108,92,231,0.5); z-index:200;
+    animation:botIntro .4s ease;
+  }
+  @keyframes botIntro{ from{ transform:scale(0); } to{ transform:scale(1); } }
+  #bot-fab:hover{ filter:brightness(1.1); }
+  #bot-panel{
+    position:fixed; top:0; right:0; height:100%; width:340px; max-width:92vw;
+    background:var(--panel); border-left:1px solid var(--border-strong); z-index:201;
+    display:flex; flex-direction:column; transform:translateX(100%); transition:transform .25s ease;
+    box-shadow:-10px 0 40px rgba(0,0,0,0.4);
+  }
+  #bot-panel.open{ transform:translateX(0); }
+  .bot-header{
+    padding:16px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;
+  }
+  .bot-header .bot-title{ display:flex; align-items:center; gap:10px; font-family:var(--font-display); font-weight:600; }
+  .bot-header .bot-title .dot{ width:8px; height:8px; border-radius:50%; background:var(--success); }
+  .bot-close{ background:none; border:none; color:var(--text-dim); font-size:20px; cursor:pointer; }
+  .bot-messages{ flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+  .bot-msg{ font-size:13px; line-height:1.5; max-width:88%; padding:10px 13px; border-radius:12px; }
+  .bot-msg.user{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bot-msg.bot{ align-self:flex-start; background:var(--panel-2); border-bottom-left-radius:4px; }
+  .bot-msg.typing{ color:var(--text-dim); font-style:italic; }
+  .bot-input-row{ padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; }
+  .bot-input-row input{ flex:1; padding:10px 12px; font-size:13px; }
+
+  /* ---------- EMAIL GATE (join via link) ---------- */
+  #gate-overlay{
+    position:fixed; inset:0; background:rgba(6,10,20,0.9); backdrop-filter:blur(6px); z-index:300;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  #gate-overlay.hidden{ display:none; }
+
+  .footer-note{ color:var(--text-dimmer); font-size:12px; margin-top:18px; text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="toast-stack" id="toast-stack"></div>
+
+<!-- ============ LOGIN ============ -->
+<div class="screen active" id="screen-login">
+  <div class="login-box">
+    <div class="brand"><span class="pulse-dot"></span> Signal</div>
+    <p class="sub">Video meetings with a built-in AI co-pilot.</p>
+    <div class="card login-card">
+      <label class="field-label" for="login-email">Your email</label>
+      <input type="email" id="login-email" placeholder="you@company.com" autocomplete="email" />
+      <button class="btn btn-primary" id="login-btn">Continue</button>
+      <div id="login-error"></div>
+    </div>
+    <p class="footer-note">No password needed — just an email to identify you on calls.</p>
+  </div>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<div class="screen" id="screen-dashboard">
+  <div style="display:flex; flex-direction:column; width:100%;">
+    <div class="topbar">
+      <div class="brand"><span class="pulse-dot"></span> Signal</div>
+      <div class="who">
+        <span id="dash-greeting">Hi, there</span>
+        <div class="avatar" id="dash-avatar">?</div>
+      </div>
+    </div>
+    <div class="dash-main">
+      <div class="dash-grid">
+        <div class="card dash-hero">
+          <h1>Start a meeting in one click.</h1>
+          <p>Create a private room, share the link, and jump on camera — with screen share and live chat built in.</p>
+          <div>
+            <button class="btn btn-primary" id="create-meeting-btn" style="padding:14px 22px; font-size:15px;">＋ New meeting</button>
+          </div>
+          <div class="link-result card" id="link-result" style="padding:16px; background:var(--panel-2);">
+            <label class="field-label">Share this link</label>
+            <div class="link-row">
+              <span id="link-text"></span>
+              <button class="btn btn-ghost" id="copy-link-btn" style="padding:8px 12px;">Copy</button>
+            </div>
+            <button class="btn btn-primary" id="enter-meeting-btn" style="width:100%; margin-top:12px;">Enter room →</button>
+          </div>
+        </div>
+        <div class="card dash-side">
+          <h3>Join a meeting</h3>
+          <p style="color:var(--text-dim); font-size:13px;">Have a code or link? Paste it below.</p>
+          <input type="text" id="join-code-input" placeholder="Meeting code, e.g. cdf102d6" />
+          <button class="btn" id="join-code-btn">Join meeting</button>
+          <div class="divider-or">tip</div>
+          <p style="color:var(--text-dimmer); font-size:12px; line-height:1.6;">
+            Anyone with your meeting link can join directly — they'll just need to enter their email first.
+          </p>
+        </div>
+      </div>
+
+      <div class="card about-card" style="max-width:920px; width:100%; margin-top:24px; padding:32px;">
+        <h3 style="font-family:var(--font-display); font-size:18px; margin-bottom:14px;">About Signal</h3>
+        <p style="color:var(--text-dim); font-size:13px; line-height:1.7; margin-bottom:20px;">
+          Signal is a lightweight video meeting tool built for quick, no-friction calls — no downloads,
+          no accounts to manage, just an email and a link. Every room runs on peer-to-peer WebRTC for low
+          latency, keeps a running chat log alongside the call, and can hand you an AI assistant mid-meeting
+          when you need a fast answer without breaking your flow.
+        </p>
+        <div class="about-grid">
+          <div class="about-item">
+            <div class="about-item-title">🎥 HD video &amp; screen share</div>
+            <p>Camera, mic, and screen sharing with one click — switch between them without dropping the call.</p>
+          </div>
+          <div class="about-item">
+            <div class="about-item-title">💬 Live in-call chat</div>
+            <p>A running message thread alongside the video, saved so you can revisit what was shared.</p>
+          </div>
+          <div class="about-item">
+            <div class="about-item-title">✨ Built-in AI assistant</div>
+            <p>A chat-based assistant available right inside the call for quick lookups and summaries.</p>
+          </div>
+          <div class="about-item">
+            <div class="about-item-title">🔒 Private by default</div>
+            <p>Rooms are only reachable by direct link — nothing is listed or searchable.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ROOM ============ -->
+<div class="screen" id="screen-room">
+  <div class="room-topbar">
+    <div class="meta">
+      <div class="brand" style="font-size:16px;"><span class="pulse-dot"></span> Signal</div>
+      <span class="code" id="room-code-label">—</span>
+      <span class="code" id="rec-indicator" style="display:none; color:var(--live); border:1px solid var(--live);">● REC</span>
+    </div>
+    <div class="meta">
+      <button class="btn btn-ghost" id="room-copy-btn" style="padding:8px 14px; font-size:13px;">Copy invite link</button>
+    </div>
+  </div>
+  <div class="room-body">
+    <div class="video-area">
+      <div class="video-grid" id="video-grid"></div>
+    </div>
+    <div class="chat-panel hidden" id="chat-panel">
+      <div class="chat-header">In-call messages</div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Message everyone…" />
+        <button class="btn btn-primary" id="chat-send-btn">Send</button>
+      </div>
+    </div>
+  </div>
+  <div class="controls-bar">
+    <button class="ctrl-btn active" id="toggle-mic-btn" title="Mute / unmute">🎤</button>
+    <button class="ctrl-btn active" id="toggle-cam-btn" title="Camera on / off">📷</button>
+    <button class="ctrl-btn" id="toggle-screen-btn" title="Share screen">🖥️</button>
+    <div class="ctrl-sep"></div>
+    <button class="ctrl-btn" id="toggle-chat-btn" title="Chat">💬</button>
+    <div class="ctrl-sep"></div>
+    <button class="ctrl-btn leave" id="leave-btn">Leave</button>
+  </div>
+</div>
+
+<!-- ============ EMAIL GATE for joining via shared link ============ -->
+<div id="gate-overlay" class="hidden">
+  <div class="card login-card" style="max-width:380px; width:100%;">
+    <div class="brand" style="margin-bottom:6px;"><span class="pulse-dot"></span> Signal</div>
+    <p style="color:var(--text-dim); font-size:13px; margin-bottom:20px;">Enter your email to join this meeting.</p>
+    <label class="field-label" for="gate-email">Email</label>
+    <input type="email" id="gate-email" placeholder="you@company.com" autocomplete="email" />
+    <button class="btn btn-primary" id="gate-join-btn" style="width:100%; margin-top:16px; padding:13px;">Join meeting</button>
+    <div id="gate-error" style="color:var(--danger); font-size:13px; margin-top:10px; display:none;"></div>
+  </div>
+</div>
+
+<!-- ============ CHATBOT ============ -->
+<button id="bot-fab" title="Ask the meeting assistant">✨</button>
+<div id="bot-panel">
+  <div class="bot-header">
+    <div class="bot-title"><span class="dot"></span> Meet Assistant</div>
+    <button class="bot-close" id="bot-close-btn">✕</button>
+  </div>
+  <div class="bot-messages" id="bot-messages">
+    <div class="bot-msg bot">Hi! I'm your meeting assistant. Ask me anything.</div>
+  </div>
+  <div class="bot-input-row">
+    <input type="text" id="bot-input" placeholder="Ask the assistant…" />
+    <button class="btn btn-primary" id="bot-send-btn">Send</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------
+  const API = ""; // same origin
+  const state = {
+    token: localStorage.getItem("meet_token") || null,
+    user: JSON.parse(localStorage.getItem("meet_user") || "null"),
+    meetingId: null,
+    peerId: null,
+    ws: null,
+    localStream: null,
+    screenStream: null,
+    cameraTrack: null,
+    peers: {},          // peer_id -> { pc, name }
+    micOn: true,
+    camOn: true,
+    screenOn: false,
+    iceServers: [{urls:["stun:stun.l.google.com:19302"]}],
+    // audio recording (mixed local + remote), uploaded to the backend on leave
+    audioCtx: null,
+    recordDest: null,
+    recorder: null,
+    recordedChunks: [],
+    connectedAudioSources: new Set(),
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const el = (tag, cls) => { const e = document.createElement(tag); if(cls) e.className = cls; return e; };
+
+  function showScreen(id){
+    document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+    $(id).classList.add("active");
+  }
+
+  function toast(msg){
+    const stack = $("#toast-stack");
+    const t = el("div", "toast");
+    t.textContent = msg;
+    stack.appendChild(t);
+    setTimeout(() => t.remove(), 4200);
+  }
+
+  function initials(name){
+    return (name || "?").trim().charAt(0).toUpperCase();
+  }
+
+  // ---------------------------------------------------------------
+  // API helpers
+  // ---------------------------------------------------------------
+  async function apiFetch(path, opts = {}){
+    opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    if (state.token) opts.headers["Authorization"] = "Bearer " + state.token;
+    const res = await fetch(API + path, opts);
+    if (!res.ok){
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || ("Request failed: " + res.status));
+    }
+    return res.json();
+  }
+
+  async function loginWithEmail(email){
+    const data = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ email }) });
+    state.token = data.token;
+    state.user = data;
+    localStorage.setItem("meet_token", data.token);
+    localStorage.setItem("meet_user", JSON.stringify(data));
+    return data;
+  }
+
+  // ---------------------------------------------------------------
+  // Routing: "/" -> dashboard (if logged in) or login. "/room/:id" -> room.
+  // ---------------------------------------------------------------
+  function boot(){
+    const path = window.location.pathname;
+    const roomMatch = path.match(/^\/room\/([a-zA-Z0-9]+)/);
+
+    if (roomMatch){
+      const meetingId = roomMatch[1];
+      if (state.token && state.user){
+        enterRoomFlow(meetingId);
+      } else {
+        // Ask for email before joining (per spec: joining via link asks for email)
+        $("#gate-overlay").classList.remove("hidden");
+        $("#gate-join-btn").onclick = async () => {
+          const email = $("#gate-email").value.trim();
+          $("#gate-error").style.display = "none";
+          try {
+            await loginWithEmail(email);
+            $("#gate-overlay").classList.add("hidden");
+            enterRoomFlow(meetingId);
+          } catch (e) {
+            $("#gate-error").textContent = e.message;
+            $("#gate-error").style.display = "block";
+          }
+        };
+      }
+      return;
+    }
+
+    if (state.token && state.user){
+      showDashboard();
+    } else {
+      showScreen("#screen-login");
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Login screen
+  // ---------------------------------------------------------------
+  $("#login-btn").addEventListener("click", async () => {
+    const email = $("#login-email").value.trim();
+    $("#login-error").style.display = "none";
+    try {
+      await loginWithEmail(email);
+      showDashboard();
+    } catch (e) {
+      $("#login-error").textContent = e.message;
+      $("#login-error").style.display = "block";
+    }
+  });
+  $("#login-email").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#login-btn").click(); });
+
+  // ---------------------------------------------------------------
+  // Dashboard
+  // ---------------------------------------------------------------
+  function showDashboard(){
+    $("#dash-greeting").textContent = "Hi, " + (state.user.first_name || state.user.name);
+    $("#dash-avatar").textContent = initials(state.user.first_name || state.user.name);
+    showScreen("#screen-dashboard");
+    history.replaceState({}, "", "/");
+  }
+
+  $("#create-meeting-btn").addEventListener("click", async () => {
+    try {
+      const data = await apiFetch("/api/meetings/create", { method: "POST", body: JSON.stringify({ title: "Quick meeting" }) });
+      const url = window.location.origin + "/room/" + data.meeting_id;
+      $("#link-text").textContent = url;
+      $("#link-result").style.display = "block";
+      $("#link-result").dataset.meetingId = data.meeting_id;
+      $("#link-result").dataset.url = url;
+    } catch (e) { toast(e.message); }
+  });
+
+  $("#copy-link-btn").addEventListener("click", () => {
+    navigator.clipboard.writeText($("#link-result").dataset.url);
+    toast("Link copied to clipboard");
+  });
+
+  $("#enter-meeting-btn").addEventListener("click", () => {
+    const id = $("#link-result").dataset.meetingId;
+    window.location.href = "/room/" + id;
+  });
+
+  $("#join-code-btn").addEventListener("click", () => {
+    let code = $("#join-code-input").value.trim();
+    const m = code.match(/room\/([a-zA-Z0-9]+)/);
+    if (m) code = m[1];
+    if (!code) { toast("Enter a meeting code or link"); return; }
+    window.location.href = "/room/" + code;
+  });
+
+  // ---------------------------------------------------------------
+  // Room flow
+  // ---------------------------------------------------------------
+  async function enterRoomFlow(meetingId){
+    state.meetingId = meetingId;
+    showScreen("#screen-room");
+    history.replaceState({}, "", "/room/" + meetingId);
+    $("#room-code-label").textContent = meetingId;
+
+    // chatbot only unlocked for the configured email
+    if (state.user.chatbot_unlocked){
+      $("#bot-fab").style.display = "flex";
+    }
+
+    try {
+      const ice = await apiFetch("/api/ice-config");
+      if (ice.iceServers && ice.iceServers.length) state.iceServers = ice.iceServers;
+    } catch (e) { /* fall back to default STUN */ }
+
+    try {
+      await apiFetch("/api/meetings/" + meetingId).catch(() => { throw new Error("This meeting link is invalid."); });
+    } catch (e) { toast(e.message); }
+
+    // camera/mic permission
+    try {
+      state.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch (e) {
+      toast("Camera/mic permission denied — you can still join without them.");
+      state.localStream = new MediaStream();
+    }
+    state.cameraTrack = state.localStream.getVideoTracks()[0] || null;
+    renderLocalTile();
+    startAudioRecording();
+
+    // load chat history
+    try {
+      const history = await apiFetch("/api/meetings/" + meetingId + "/messages");
+      history.forEach(renderChatMessage);
+    } catch (e) { /* ignore */ }
+
+    connectSignaling(meetingId);
+  }
+
+  function renderLocalTile(){
+    const grid = $("#video-grid");
+    let tile = document.getElementById("tile-local");
+    if (!tile){
+      tile = el("div", "tile mirrored");
+      tile.id = "tile-local";
+      const video = el("video");
+      video.autoplay = true; video.muted = true; video.playsInline = true;
+      tile.appendChild(video);
+      const tag = el("div", "name-tag");
+      tag.textContent = (state.user.first_name || state.user.name) + " (You)";
+      tile.appendChild(tag);
+      grid.prepend(tile);
+    }
+    tile.querySelector("video").srcObject = state.localStream;
+  }
+
+  function addRemoteTile(peerId, name){
+    let tile = document.getElementById("tile-" + peerId);
+    if (tile) return tile;
+    tile = el("div", "tile");
+    tile.id = "tile-" + peerId;
+    const video = el("video");
+    video.autoplay = true; video.playsInline = true;
+    tile.appendChild(video);
+    const badge = el("div", "avatar-fallback");
+    badge.textContent = initials(name);
+    tile.appendChild(badge);
+    const tag = el("div", "name-tag");
+    tag.textContent = name;
+    tile.appendChild(tag);
+    $("#video-grid").appendChild(tile);
+    return tile;
+  }
+
+  function removeRemoteTile(peerId){
+    const tile = document.getElementById("tile-" + peerId);
+    if (tile) tile.remove();
+  }
+
+  function updateTileName(peerId, name){
+    const tile = document.getElementById("tile-" + peerId);
+    if (tile) {
+      const tag = tile.querySelector(".name-tag");
+      if (tag) tag.textContent = name;
+      const fb = tile.querySelector(".avatar-fallback");
+      if (fb) fb.textContent = initials(name);
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Audio recording — mixes local mic + every remote participant's audio
+  // into one track via the Web Audio API, records it with MediaRecorder,
+  // and uploads the result to the backend (stored as a BLOB in SQLite) on leave.
+  // ---------------------------------------------------------------
+  function startAudioRecording(){
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      state.audioCtx = new AudioContextCtor();
+      state.recordDest = state.audioCtx.createMediaStreamDestination();
+
+      addStreamToRecording(state.localStream);
+
+      const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+      const mimeType = mimeCandidates.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+      if (!window.MediaRecorder) { console.warn("MediaRecorder not supported — recording disabled."); return; }
+
+      state.recorder = mimeType
+        ? new MediaRecorder(state.recordDest.stream, { mimeType })
+        : new MediaRecorder(state.recordDest.stream);
+      state.recordedChunks = [];
+      state.recorder.ondataavailable = (evt) => { if (evt.data && evt.data.size > 0) state.recordedChunks.push(evt.data); };
+      state.recorder.start(1000); // gather in 1s chunks so a crash doesn't lose everything
+      $("#rec-indicator").style.display = "inline";
+    } catch (e) {
+      console.warn("Could not start audio recording:", e);
+    }
+  }
+
+  function addStreamToRecording(stream){
+    if (!state.audioCtx || !state.recordDest) return;
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length || state.connectedAudioSources.has(stream.id)) return;
+    try {
+      const source = state.audioCtx.createMediaStreamSource(new MediaStream(audioTracks));
+      source.connect(state.recordDest);
+      state.connectedAudioSources.add(stream.id);
+    } catch (e) { /* stream may already be connected or context closed */ }
+  }
+
+  async function stopAndUploadRecording(){
+    if (!state.recorder || state.recorder.state === "inactive") return;
+    const stopped = new Promise((resolve) => { state.recorder.onstop = resolve; });
+    state.recorder.stop();
+    await stopped;
+    $("#rec-indicator").style.display = "none";
+    if (!state.recordedChunks.length) return;
+
+    const blob = new Blob(state.recordedChunks, { type: state.recorder.mimeType || "audio/webm" });
+    const form = new FormData();
+    form.append("meeting_id", state.meetingId);
+    form.append("file", blob, "recording.webm");
+    try {
+      await fetch("/api/recordings/upload", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + state.token },
+        body: form,
+      });
+    } catch (e) {
+      console.warn("Recording upload failed:", e);
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // WebRTC signaling over WebSocket
+  // ---------------------------------------------------------------
+  function connectSignaling(meetingId){
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const name = encodeURIComponent(state.user.first_name || state.user.name);
+    const url = `${proto}://${window.location.host}/ws/${meetingId}?token=${state.token}&name=${name}`;
+    const ws = new WebSocket(url);
+    state.ws = ws;
+
+    ws.onmessage = async (evt) => {
+      const data = JSON.parse(evt.data);
+      switch (data.type){
+        case "welcome":
+          state.peerId = data.peer_id;
+          for (const existingId of data.existing_peers){
+            await createPeerConnection(existingId, true);
+          }
+          break;
+        case "peer-joined":
+          toast(data.name + " joined the meeting");
+          addRemoteTile(data.peer_id, data.name);
+          break;
+        case "offer": {
+          const pc = await createPeerConnection(data.from, false, data.name);
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          ws.send(JSON.stringify({ type: "answer", target: data.from, sdp: answer }));
+          break;
+        }
+        case "answer": {
+          const peer = state.peers[data.from];
+          if (peer) {
+            await peer.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            // We only learn the existing peer's real name once they answer -
+            // update the tile that was created with the "Connecting…" placeholder.
+            peer.name = data.name || peer.name;
+            updateTileName(data.from, peer.name);
+          }
+          break;
+        }
+        case "ice-candidate": {
+          const peer = state.peers[data.from];
+          if (peer && data.candidate) {
+            try { await peer.pc.addIceCandidate(data.candidate); } catch (e) {}
+          }
+          break;
+        }
+        case "peer-left":
+          toast(data.name + " left the meeting");
+          if (state.peers[data.peer_id]) { state.peers[data.peer_id].pc.close(); delete state.peers[data.peer_id]; }
+          removeRemoteTile(data.peer_id);
+          break;
+        case "chat-message":
+          renderChatMessage({ sender_name: data.name, text: data.text, created_at: data.created_at, self: data.from === state.peerId });
+          if ($("#chat-panel").classList.contains("hidden") && data.from !== state.peerId){
+            toast(data.name + ": " + data.text.slice(0, 60));
+          }
+          break;
+        case "media-state":
+          updateRemoteMediaBadge(data.from, data.state);
+          break;
+      }
+    };
+
+    ws.onclose = () => { /* signaling closed */ };
+    ws.onerror = () => toast("Connection issue — signaling channel dropped.");
+  }
+
+  async function createPeerConnection(peerId, isInitiator, name){
+    if (state.peers[peerId]) return state.peers[peerId].pc;
+
+    const pc = new RTCPeerConnection({ iceServers: state.iceServers });
+    state.peers[peerId] = { pc, name: name || "Guest" };
+
+    state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
+
+    pc.onicecandidate = (evt) => {
+      if (evt.candidate){
+        state.ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: evt.candidate }));
+      }
+    };
+
+    pc.ontrack = (evt) => {
+      const tile = addRemoteTile(peerId, state.peers[peerId].name);
+      updateTileName(peerId, state.peers[peerId].name);
+      const video = tile.querySelector("video");
+      if (video.srcObject !== evt.streams[0]) {
+        video.srcObject = evt.streams[0];
+        // Safari/iOS in particular can refuse autoplay-with-audio silently;
+        // retry the play() call and surface a click-to-play affordance instead
+        // of leaving the tile looking "stuck".
+        video.play().catch(() => {
+          const hint = el("div", "name-tag");
+          hint.textContent = "Tap to play";
+          hint.style.cursor = "pointer";
+          hint.style.right = "10px"; hint.style.left = "auto";
+          hint.onclick = () => { video.play(); hint.remove(); };
+          tile.appendChild(hint);
+        });
+      }
+      const fb = tile.querySelector(".avatar-fallback");
+      if (fb) fb.remove();
+      addStreamToRecording(evt.streams[0]);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("ICE state for", peerId, "->", pc.iceConnectionState);
+      if (pc.iceConnectionState === "failed") {
+        toast("Connection to " + (state.peers[peerId]?.name || "a participant") + " failed — likely needs a TURN server for this network.");
+      }
+    };
+
+    if (isInitiator){
+      addRemoteTile(peerId, "Connecting…");
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+    }
+
+    return pc;
+  }
+
+  function updateRemoteMediaBadge(peerId, mstate){
+    const tile = document.getElementById("tile-" + peerId);
+    if (!tile) return;
+    let badge = tile.querySelector(".mic-off-badge");
+    if (!badge){
+      badge = el("div", "mic-off-badge");
+      badge.textContent = "🔇";
+      tile.appendChild(badge);
+    }
+    badge.style.display = (mstate && mstate.mic === false) ? "flex" : "none";
+  }
+
+  // ---------------------------------------------------------------
+  // Controls: mic, camera, screen share, chat, leave
+  // ---------------------------------------------------------------
+  function broadcastMediaState(){
+    if (state.ws && state.ws.readyState === 1){
+      state.ws.send(JSON.stringify({ type: "media-state", state: { mic: state.micOn, cam: state.camOn, screen: state.screenOn } }));
+    }
+  }
+
+  $("#toggle-mic-btn").addEventListener("click", () => {
+    state.micOn = !state.micOn;
+    state.localStream.getAudioTracks().forEach(t => t.enabled = state.micOn);
+    $("#toggle-mic-btn").classList.toggle("off", !state.micOn);
+    $("#toggle-mic-btn").classList.toggle("active", state.micOn);
+    $("#toggle-mic-btn").textContent = state.micOn ? "🎤" : "🔇";
+    broadcastMediaState();
+  });
+
+  $("#toggle-cam-btn").addEventListener("click", () => {
+    state.camOn = !state.camOn;
+    state.localStream.getVideoTracks().forEach(t => t.enabled = state.camOn);
+    $("#toggle-cam-btn").classList.toggle("off", !state.camOn);
+    $("#toggle-cam-btn").classList.toggle("active", state.camOn);
+    broadcastMediaState();
+  });
+
+  $("#toggle-screen-btn").addEventListener("click", async () => {
+    if (!state.screenOn){
+      try {
+        state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch (e) { return; }
+      const screenTrack = state.screenStream.getVideoTracks()[0];
+      Object.values(state.peers).forEach(({ pc }) => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (sender) sender.replaceTrack(screenTrack);
+      });
+      document.querySelector("#tile-local video").srcObject = state.screenStream;
+      document.getElementById("tile-local").classList.remove("mirrored");
+      state.screenOn = true;
+      $("#toggle-screen-btn").classList.add("active");
+      screenTrack.onended = () => stopScreenShare();
+    } else {
+      stopScreenShare();
+    }
+    broadcastMediaState();
+  });
+
+  function stopScreenShare(){
+    if (state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
+    state.screenOn = false;
+    $("#toggle-screen-btn").classList.remove("active");
+    if (state.cameraTrack){
+      Object.values(state.peers).forEach(({ pc }) => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (sender) sender.replaceTrack(state.cameraTrack);
+      });
+      document.querySelector("#tile-local video").srcObject = state.localStream;
+      document.getElementById("tile-local").classList.add("mirrored");
+    }
+  }
+
+  $("#toggle-chat-btn").addEventListener("click", () => {
+    $("#chat-panel").classList.toggle("hidden");
+    $("#toggle-chat-btn").classList.toggle("active");
+  });
+
+  $("#leave-btn").addEventListener("click", async () => {
+    $("#leave-btn").disabled = true;
+    $("#leave-btn").textContent = "Leaving…";
+    await stopAndUploadRecording();
+    Object.values(state.peers).forEach(({ pc }) => pc.close());
+    state.peers = {};
+    if (state.ws) state.ws.close();
+    if (state.localStream) state.localStream.getTracks().forEach(t => t.stop());
+    if (state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
+    if (state.audioCtx) state.audioCtx.close();
+    document.querySelectorAll('[id^="tile-"]').forEach(t => t.remove());
+    window.location.href = "/";
+  });
+
+  // ---------------------------------------------------------------
+  // In-call chat
+  // ---------------------------------------------------------------
+  function renderChatMessage(msg){
+    const wrap = el("div", "msg" + (msg.self ? " self" : ""));
+    const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    wrap.innerHTML = `<div class="msg-name">${escapeHtml(msg.sender_name || msg.name)}<span class="msg-time">${time}</span></div><div>${escapeHtml(msg.text)}</div>`;
+    $("#chat-messages").appendChild(wrap);
+    $("#chat-messages").scrollTop = $("#chat-messages").scrollHeight;
+  }
+
+  function escapeHtml(str){
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  function sendChat(){
+    const input = $("#chat-input");
+    const text = input.value.trim();
+    if (!text || !state.ws) return;
+    state.ws.send(JSON.stringify({ type: "chat-message", text }));
+    input.value = "";
+  }
+  $("#chat-send-btn").addEventListener("click", sendChat);
+  $("#chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+
+  // ---------------------------------------------------------------
+  // Chatbot popup (Groq)
+  // ---------------------------------------------------------------
+  $("#bot-fab").addEventListener("click", () => $("#bot-panel").classList.add("open"));
+  $("#bot-close-btn").addEventListener("click", () => $("#bot-panel").classList.remove("open"));
+
+  async function sendBotMessage(){
+    const input = $("#bot-input");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    appendBotMsg(text, "user");
+    const typingEl = appendBotMsg("Thinking…", "bot typing");
+    try {
+      const data = await apiFetch("/api/chatbot", {
+        method: "POST",
+        body: JSON.stringify({ meeting_id: state.meetingId, message: text }),
+      });
+      typingEl.remove();
+      appendBotMsg(data.reply, "bot");
+    } catch (e) {
+      typingEl.remove();
+      appendBotMsg("Sorry, I couldn't respond: " + e.message, "bot");
+    }
+  }
+  function appendBotMsg(text, cls){
+    const wrap = el("div", "bot-msg " + cls);
+    wrap.textContent = text;
+    $("#bot-messages").appendChild(wrap);
+    $("#bot-messages").scrollTop = $("#bot-messages").scrollHeight;
+    return wrap;
+  }
+  $("#bot-send-btn").addEventListener("click", sendBotMessage);
+  $("#bot-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendBotMessage(); });
+
+  // ---------------------------------------------------------------
+  // Copy invite link from inside the room
+  // ---------------------------------------------------------------
+  $("#room-copy-btn").addEventListener("click", () => {
+    navigator.clipboard.writeText(window.location.origin + "/room/" + state.meetingId);
+    toast("Invite link copied");
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
